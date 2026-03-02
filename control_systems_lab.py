@@ -82,6 +82,11 @@ try:
         
     with col2:
         st.subheader("Closed-Loop Transfer Function T(s)")
+        # Get closed-loop numerator and denominator
+        T_num, T_den = ctrl.tfdata(T)
+        T_num_str = format_polynomial(T_num[0][0].tolist())
+        T_den_str = format_polynomial(T_den[0][0].tolist())
+        st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
         st.latex(f"T(s) = \\frac{{G(s)}}{{1 + G(s)}}")
     
     st.header("Time Domain Analysis")

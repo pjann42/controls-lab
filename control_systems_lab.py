@@ -32,11 +32,25 @@ with st.sidebar:
             st.stop()
     else:
         st.subheader("Second-Order Parameters")
-        zeta = st.slider("Damping Ratio (ζ)", 0.0, 2.0, 0.5, 0.01)
-        wn = st.slider("Natural Frequency (ωn)", 0.1, 10.0, 1.0, 0.1)
+        zeta_input = st.text_input("Damping Ratio (ζ)", "0.5", help="Enter damping ratio value")
+        wn_input = st.text_input("Natural Frequency (ωn)", "1.0", help="Enter natural frequency value")
         
-        num = [wn**2]
-        den = [1, 2*zeta*wn, wn**2]
+        try:
+            zeta = float(zeta_input.strip())
+            wn = float(wn_input.strip())
+            
+            if zeta < 0:
+                st.error("Damping ratio must be non-negative")
+                st.stop()
+            if wn <= 0:
+                st.error("Natural frequency must be positive")
+                st.stop()
+                
+            num = [wn**2]
+            den = [1, 2*zeta*wn, wn**2]
+        except ValueError:
+            st.error("Invalid input format. Please enter numeric values.")
+            st.stop()
     
     st.markdown("---")
     calculate_button = st.button("🔍 Calculate System Analysis", type="primary")
@@ -142,35 +156,192 @@ try:
         T_den_str = format_polynomial(T_den[0][0].tolist())
         st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
     
-    st.header("Time Domain Analysis")
+    st.header("Stability Analysis")
     st.caption("Using Closed-Loop Transfer Function T(s)")
     
-    time = np.linspace(0, 10, 1000)
-    t, y = ctrl.step_response(T, time)
+    poles = ctrl.pole(T)  # Use closed-loop poles for stability analysis
+    zeros = ctrl.zero(T)  # Use closed-loop zeros
     
-    step_info = ctrl.step_info(T)
+    # Classify stability
+    stability_class, stability_desc, stability_details = classify_stability(poles)
     
-    col3, col4 = st.columns([2, 1])
+    # Display stability result
+    if stability_class == "Asymptotically Stable":
+        st.success(f"✅ System is {stability_class}")
+    elif stability_class == "Marginally Stable":
+        st.warning(f"⚠️ System is {stability_class}")
+    elif stability_class == "Unstable":
+        st.error(f"❌ System is {stability_class}")
+    else:
+        st.info(f"ℹ️ System is {stability_class}")
     
-    with col3:
-        fig_step = go.Figure()
-        fig_step.add_trace(go.Scatter(x=t, y=y, mode='lines', name='Step Response', line=dict(color='blue', width=2)))
-        fig_step.update_layout(
-            title="Step Response",
-            xaxis_title="Time (s)",
-            yaxis_title="Amplitude",
-            hovermode='x unified',
-            template='plotly_white'
+    st.caption(stability_details)
+    
+    # Create tabs for Open-Loop and Closed-Loop pole-zero maps
+    tab1, tab2 = st.tabs(["Open-Loop Pole-Zero Map", "Closed-Loop Pole-Zero Map"])
+    
+    with tab1:
+        st.subheader("Open-Loop System G(s)")
+        
+        # Open-loop poles and zeros
+        ol_poles = ctrl.pole(G)
+        ol_zeros = ctrl.zero(G)
+        
+        fig_pz_ol = go.Figure()
+        
+        if ol_poles.size > 0:
+            fig_pz_ol.add_trace(go.Scatter(
+                x=[p.real for p in ol_poles],
+                y=[p.imag for p in ol_poles],
+                mode='markers',
+                name='Open-Loop Poles',
+                marker=dict(symbol='x', size=12, color='red', line=dict(width=2))
+            ))
+        
+        if ol_zeros.size > 0:
+            fig_pz_ol.add_trace(go.Scatter(
+                x=[z.real for z in ol_zeros],
+                y=[z.imag for z in ol_zeros],
+                mode='markers',
+                name='Open-Loop Zeros',
+                marker=dict(symbol='circle', size=10, color='blue', line=dict(width=2))
+            ))
+        
+        fig_pz_ol.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig_pz_ol.add_vline(x=0, line_dash="dot", line_color="gray")
+        
+        max_val_ol = max(max(abs(p.real) for p in ol_poles) if ol_poles.size > 0 else 1, 
+                         max(abs(p.imag) for p in ol_poles) if ol_poles.size > 0 else 1,
+                         max(abs(z.real) for z in ol_zeros) if ol_zeros.size > 0 else 1,
+                         max(abs(z.imag) for z in ol_zeros) if ol_zeros.size > 0 else 1) * 1.2
+        
+        fig_pz_ol.update_layout(
+            title="Open-Loop Pole-Zero Map",
+            xaxis_title="Real Axis",
+            yaxis_title="Imaginary Axis",
+            xaxis=dict(range=[-max_val_ol, max_val_ol]),
+            yaxis=dict(range=[-max_val_ol, max_val_ol]),
+            template='plotly_white',
+            showlegend=True
         )
-        st.plotly_chart(fig_step, use_container_width=True)
+        
+        st.plotly_chart(fig_pz_ol, use_container_width=True)
+        
+        col8, col9 = st.columns(2)
+        with col8:
+            st.subheader("Open-Loop Poles")
+            if ol_poles.size > 0:
+                for i, pole in enumerate(ol_poles):
+                    st.write(f"Pole {i+1}: {pole:.3f}")
+            else:
+                st.write("No poles")
+        
+        with col9:
+            st.subheader("Open-Loop Zeros")
+            if ol_zeros.size > 0:
+                for i, zero in enumerate(ol_zeros):
+                    st.write(f"Zero {i+1}: {zero:.3f}")
+            else:
+                st.write("No zeros")
     
-    with col4:
-        st.subheader("Step Response Metrics")
-        st.metric("Rise Time", f"{step_info.get('RiseTime', 'N/A'):.3f} s")
-        st.metric("Settling Time", f"{step_info.get('SettlingTime', 'N/A'):.3f} s")
-        st.metric("Overshoot", f"{step_info.get('Overshoot', 0):.3f}%")
-        st.metric("Peak", f"{step_info.get('Peak', 'N/A'):.3f}")
-        st.metric("Peak Time", f"{step_info.get('PeakTime', 'N/A'):.3f} s")
+    with tab2:
+        st.subheader("Closed-Loop System T(s)")
+        
+        # Closed-loop poles and zeros (for stability analysis)
+        cl_poles = ctrl.pole(T)
+        cl_zeros = ctrl.zero(T)
+        
+        fig_pz_cl = go.Figure()
+        
+        if cl_poles.size > 0:
+            fig_pz_cl.add_trace(go.Scatter(
+                x=[p.real for p in cl_poles],
+                y=[p.imag for p in cl_poles],
+                mode='markers',
+                name='Closed-Loop Poles',
+                marker=dict(symbol='x', size=12, color='darkred', line=dict(width=2))
+            ))
+        
+        if cl_zeros.size > 0:
+            fig_pz_cl.add_trace(go.Scatter(
+                x=[z.real for z in cl_zeros],
+                y=[z.imag for z in cl_zeros],
+                mode='markers',
+                name='Closed-Loop Zeros',
+                marker=dict(symbol='circle', size=10, color='darkblue', line=dict(width=2))
+            ))
+        
+        fig_pz_cl.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig_pz_cl.add_vline(x=0, line_dash="dot", line_color="gray")
+        
+        max_val_cl = max(max(abs(p.real) for p in cl_poles) if cl_poles.size > 0 else 1, 
+                         max(abs(p.imag) for p in cl_poles) if cl_poles.size > 0 else 1,
+                         max(abs(z.real) for z in cl_zeros) if cl_zeros.size > 0 else 1,
+                         max(abs(z.imag) for z in cl_zeros) if cl_zeros.size > 0 else 1) * 1.2
+        
+        fig_pz_cl.update_layout(
+            title="Closed-Loop Pole-Zero Map",
+            xaxis_title="Real Axis",
+            yaxis_title="Imaginary Axis",
+            xaxis=dict(range=[-max_val_cl, max_val_cl]),
+            yaxis=dict(range=[-max_val_cl, max_val_cl]),
+            template='plotly_white',
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_pz_cl, use_container_width=True)
+        
+        col10, col11 = st.columns(2)
+        with col10:
+            st.subheader("Closed-Loop Poles")
+            if cl_poles.size > 0:
+                for i, pole in enumerate(cl_poles):
+                    st.write(f"Pole {i+1}: {pole:.3f}")
+            else:
+                st.write("No poles")
+        
+        with col11:
+            st.subheader("Closed-Loop Zeros")
+            if cl_zeros.size > 0:
+                for i, zero in enumerate(cl_zeros):
+                    st.write(f"Zero {i+1}: {zero:.3f}")
+            else:
+                st.write("No zeros")
+    
+    # Only show Time Domain Analysis for stable systems
+    if stability_class != "Unstable":
+        st.header("Time Domain Analysis")
+        st.caption("Using Closed-Loop Transfer Function T(s)")
+        
+        time = np.linspace(0, 10, 1000)
+        t, y = ctrl.step_response(T, time)
+        
+        step_info = ctrl.step_info(T)
+        
+        col3, col4 = st.columns([2, 1])
+        
+        with col3:
+            fig_step = go.Figure()
+            fig_step.add_trace(go.Scatter(x=t, y=y, mode='lines', name='Step Response', line=dict(color='blue', width=2)))
+            fig_step.update_layout(
+                title="Step Response",
+                xaxis_title="Time (s)",
+                yaxis_title="Amplitude",
+                hovermode='x unified',
+                template='plotly_white'
+            )
+            st.plotly_chart(fig_step, use_container_width=True)
+        
+        with col4:
+            st.subheader("Step Response Metrics")
+            st.metric("Rise Time", f"{step_info.get('RiseTime', 'N/A'):.3f} s")
+            st.metric("Settling Time", f"{step_info.get('SettlingTime', 'N/A'):.3f} s")
+            st.metric("Overshoot", f"{step_info.get('Overshoot', 0):.3f}%")
+            st.metric("Peak", f"{step_info.get('Peak', 'N/A'):.3f}")
+            st.metric("Peak Time", f"{step_info.get('PeakTime', 'N/A'):.3f} s")
+    else:
+        st.warning("⚠️ Time Domain Analysis skipped for unstable systems")
+        st.caption("Step response analysis is not meaningful for unstable systems")
     
     st.header("Frequency Domain Analysis")
     st.caption("Using Open-Loop Transfer Function G(s)")
@@ -248,84 +419,6 @@ try:
             st.metric("Crossover Frequency", f"{wp:.3f} rad/s")
         else:
             st.metric("Crossover Frequency", "N/A")
-    
-    st.header("Stability Analysis")
-    st.caption("Using Open-Loop Transfer Function G(s)")
-    
-    poles = ctrl.pole(G)
-    zeros = ctrl.zero(G)
-    
-    # Classify stability
-    stability_class, stability_desc, stability_details = classify_stability(poles)
-    
-    # Display stability result
-    if stability_class == "Asymptotically Stable":
-        st.success(f"✅ System is {stability_class}")
-    elif stability_class == "Marginally Stable":
-        st.warning(f"⚠️ System is {stability_class}")
-    elif stability_class == "Unstable":
-        st.error(f"❌ System is {stability_class}")
-    else:
-        st.info(f"ℹ️ System is {stability_class}")
-    
-    st.caption(stability_details)
-    
-    fig_pz = go.Figure()
-    
-    if poles.size > 0:
-        fig_pz.add_trace(go.Scatter(
-            x=[p.real for p in poles],
-            y=[p.imag for p in poles],
-            mode='markers',
-            name='Poles',
-            marker=dict(symbol='x', size=12, color='red', line=dict(width=2))
-        ))
-    
-    if zeros.size > 0:
-        fig_pz.add_trace(go.Scatter(
-            x=[z.real for z in zeros],
-            y=[z.imag for z in zeros],
-            mode='markers',
-            name='Zeros',
-            marker=dict(symbol='circle', size=10, color='blue', line=dict(width=2))
-        ))
-    
-    fig_pz.add_hline(y=0, line_dash="dot", line_color="gray")
-    fig_pz.add_vline(x=0, line_dash="dot", line_color="gray")
-    
-    max_val = max(max(abs(p.real) for p in poles) if poles.size > 0 else 1, 
-                  max(abs(p.imag) for p in poles) if poles.size > 0 else 1,
-                  max(abs(z.real) for z in zeros) if zeros.size > 0 else 1,
-                  max(abs(z.imag) for z in zeros) if zeros.size > 0 else 1) * 1.2
-    
-    fig_pz.update_layout(
-        title="Pole-Zero Map",
-        xaxis_title="Real Axis",
-        yaxis_title="Imaginary Axis",
-        xaxis=dict(range=[-max_val, max_val]),
-        yaxis=dict(range=[-max_val, max_val]),
-        template='plotly_white',
-        showlegend=True
-    )
-    
-    st.plotly_chart(fig_pz, use_container_width=True)
-    
-    col8, col9 = st.columns(2)
-    with col8:
-        st.subheader("System Poles")
-        if poles.size > 0:
-            for i, pole in enumerate(poles):
-                st.write(f"Pole {i+1}: {pole:.3f}")
-        else:
-            st.write("No poles")
-    
-    with col9:
-        st.subheader("System Zeros")
-        if zeros.size > 0:
-            for i, zero in enumerate(zeros):
-                st.write(f"Zero {i+1}: {zero:.3f}")
-        else:
-            st.write("No zeros")
 
 except Exception as e:
     st.error(f"Error: {str(e)}")

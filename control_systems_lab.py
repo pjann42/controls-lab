@@ -2,8 +2,78 @@ import streamlit as st
 import numpy as np
 import control as ctrl
 import plotly.graph_objects as go
-import plotly.subplots as sp
 from plotly.subplots import make_subplots
+
+def validate_and_create_system(num_coeffs, den_coeffs):
+    """
+    Validate transfer function realizability and create system if valid.
+    
+    Args:
+        num_coeffs: Numerator coefficients (list or array)
+        den_coeffs: Denominator coefficients (list or array)
+    
+    Returns:
+        dict: System object and validation status
+    """
+    # Input validation
+    if not num_coeffs or not den_coeffs:
+        return {
+            'valid': False,
+            'message': 'Empty coefficient arrays provided',
+            'system': None
+        }
+    
+    try:
+        # Convert to numpy arrays
+        num_array = np.array(num_coeffs, dtype=float)
+        den_array = np.array(den_coeffs, dtype=float)
+        
+        # Calculate polynomial degrees
+        num_degree = len(num_coeffs) - 1
+        den_degree = len(den_coeffs) - 1
+        
+        # Remove leading zeros for accurate degree calculation
+        while len(num_array) > 1 and abs(num_array[0]) < 1e-10:
+            num_array = num_array[1:]
+            num_degree -= 1
+            
+        while len(den_array) > 1 and abs(den_array[0]) < 1e-10:
+            den_array = den_array[1:]
+            den_degree -= 1
+        
+        # Core realizability check: n ≤ d
+        if num_degree > den_degree:
+            return {
+                'valid': False,
+                'message': 'The system is non-realizable and has no physical meaning (Improper System)',
+                'system': None,
+                'num_degree': num_degree,
+                'den_degree': den_degree
+            }
+        
+        # Create transfer function if valid
+        G = ctrl.TransferFunction(num_array, den_array)
+        
+        # Check if numerator and denominator are identical
+        identical_coeffs = np.array_equal(num_array, den_array)
+        
+        return {
+            'valid': True,
+            'message': 'System is realizable and physically meaningful',
+            'system': G,
+            'num_degree': num_degree,
+            'den_degree': den_degree,
+            'poles': ctrl.pole(G),
+            'zeros': ctrl.zero(G),
+            'identical_coeffs': identical_coeffs
+        }
+        
+    except Exception as e:
+        return {
+            'valid': False,
+            'message': f'Error creating system: {str(e)}',
+            'system': None
+        }
 
 # Ensure compatibility with NumPy 2.0
 np.NaN = np.nan
@@ -137,7 +207,14 @@ def classify_stability(poles):
         return "Undefined", "Mixed pole configuration", "Complex pole arrangement requiring detailed analysis"
 
 try:
-    G = ctrl.TransferFunction(num, den)
+    # Validate system before creating transfer function
+    validation_result = validate_and_create_system(num, den)
+    
+    if not validation_result['valid']:
+        st.error(f"❌ {validation_result['message']}")
+        st.stop()
+    
+    G = validation_result['system']
     T = ctrl.feedback(G, 1)
     
     col1, col2 = st.columns(2)
@@ -155,6 +232,19 @@ try:
         T_num_str = format_polynomial(T_num[0][0].tolist())
         T_den_str = format_polynomial(T_den[0][0].tolist())
         st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
+    
+    # Display validation info
+    st.info(f"✅ {validation_result['message']}")
+    
+    # Special message for identical numerator and denominator
+    if validation_result.get('identical_coeffs', False):
+        st.info("""
+        This transfer function represents a biproper system where the numerator and denominator polynomials 
+        are identical, simplifying mathematically to a unity gain of $H(s) = 1$. Technically, the system acts 
+        as a transparent channel with a flat frequency response that passes all signals without any delay 
+        or high frequency filtering. In practice, perfect pole-zero cancellation is nearly impossible to maintain 
+        because any slight coefficient mismatch creates a doublet that introduces unwanted transients or instability.
+        """)
     
     st.header("Stability Analysis")
     st.caption("Using Closed-Loop Transfer Function T(s)")

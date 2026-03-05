@@ -48,7 +48,8 @@ def validate_and_create_system(num_coeffs, den_coeffs):
                 'message': 'The system is non-realizable and has no physical meaning (Improper System)',
                 'system': None,
                 'num_degree': num_degree,
-                'den_degree': den_degree
+                'den_degree': den_degree,
+                'improper_system': True
             }
         
         # Create transfer function if valid
@@ -211,7 +212,39 @@ try:
     validation_result = validate_and_create_system(num, den)
     
     if not validation_result['valid']:
-        st.error(f"❌ {validation_result['message']}")
+        st.error(f"⚠️ {validation_result['message']}")
+        
+        # Add comprehensive explanation for improper system
+        if validation_result.get('improper_system', False):
+            # Display the transfer functions even though they're improper
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Open-Loop Transfer Function G(s)")
+                num_str = format_polynomial(num)
+                den_str = format_polynomial(den)
+                st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}}")
+            
+            with col2:
+                st.subheader("Closed-Loop Transfer Function T(s)")
+                # For improper systems, we can show the mathematical form but mark it as invalid
+                # T(s) = G(s)/(1+G(s)) would also be improper
+                st.latex(f"T(s) = \\frac{{G(s)}}{{1 + G(s)}}")
+            
+            st.markdown(f"""
+            **Improper Transfer Function**: Your system has numerator degree {validation_result['num_degree']} 
+            and denominator degree {validation_result['den_degree']}. Since {validation_result['num_degree']} > {validation_result['den_degree']}, 
+            this system is **physically impossible**.
+            
+            An improper transfer function violates causality by responding to inputs before they occur, requiring infinite gain at high frequencies. 
+            Real physical systems always contain energy storage elements that limit high-frequency response, ensuring the denominator dominates system dynamics. 
+            For any real system, the numerator degree must be less than or equal to the denominator degree to avoid unbounded behavior where 
+            $|G(j\\omega)| \\to \\infty$ as frequency increases.
+            
+            Physical systems inherently possess finite bandwidth and cannot respond instantaneously or predict future inputs. To achieve physical realizability, 
+            the transfer function must be modified to include additional poles in the denominator or reduce the numerator order, incorporating the neglected 
+            dynamics or energy storage elements that were omitted from the original model.
+            """)
         st.stop()
     
     G = validation_result['system']

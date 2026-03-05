@@ -373,6 +373,78 @@ try:
     # Convert to degrees
     phase_deg = np.degrees(phase_unwrapped)
     
+    # Smart autoscaling function for Bode plots
+    def smart_autoscale(y_data, padding_factor=0.1, steady_state_threshold=0.01):
+        """
+        Calculate smart Y-axis limits that avoid jittering in steady-state regions.
+        
+        Args:
+            y_data: Data array for axis scaling
+            padding_factor: Percentage of padding around data (default 10%)
+            steady_state_threshold: Threshold for detecting steady-state (default 1%)
+        
+        Returns:
+            tuple: (y_min, y_max) smart axis limits
+        """
+        y_min, y_max = np.min(y_data), np.max(y_data)
+        data_range = y_max - y_min
+        
+        # Detect steady-state regions (small changes)
+        y_diff = np.abs(np.diff(y_data))
+        steady_state_mask = y_diff < (data_range * steady_state_threshold)
+        
+        if np.sum(steady_state_mask) > len(y_data) * 0.3:  # If 30%+ is steady-state
+            # Use extended range with hysteresis for steady-state regions
+            extended_range = data_range * (1 + padding_factor * 2)
+            center = (y_min + y_max) / 2
+            y_min_smart = center - extended_range / 2
+            y_max_smart = center + extended_range / 2
+        else:
+            # Normal padding for dynamic regions
+            y_padding = data_range * padding_factor
+            y_min_smart = y_min - y_padding
+            y_max_smart = y_max + y_padding
+        
+        # Add minimum range constraints for visual clarity
+        if data_range < 5:  # For very small ranges
+            y_min_smart = y_min - 2
+            y_max_smart = y_max + 2
+        
+        return y_min_smart, y_max_smart
+    
+    # Calculate smart axis limits
+    mag_ymin, mag_ymax = smart_autoscale(mag_db, padding_factor=0.15, steady_state_threshold=0.02)
+    phase_ymin, phase_ymax = smart_autoscale(phase_deg, padding_factor=0.15, steady_state_threshold=0.02)
+    
+    # Force phase axis to strict 45-degree intervals
+    def align_phase_axis_45_deg(phase_min, phase_max):
+        """
+        Align phase axis limits to strict 45-degree intervals.
+        
+        Args:
+            phase_min: Minimum phase value in degrees
+            phase_max: Maximum phase value in degrees
+        
+        Returns:
+            tuple: (aligned_min, aligned_max, tick_values)
+        """
+        # Extend range to ensure 45-degree coverage
+        range_extension = 45  # One extra 45-degree step on each side
+        
+        # Snap min down to nearest 45-degree multiple
+        aligned_min = round((phase_min - range_extension) / 45) * 45
+        
+        # Snap max up to nearest 45-degree multiple
+        aligned_max = round((phase_max + range_extension) / 45) * 45
+        
+        # Generate tick marks at exact 45-degree intervals
+        tick_values = np.arange(aligned_min, aligned_max + 45, 45)
+        
+        return aligned_min, aligned_max, tick_values.tolist()
+    
+    # Apply 45-degree alignment to phase axis
+    phase_ymin_aligned, phase_ymax_aligned, phase_ticks_45 = align_phase_axis_45_deg(phase_ymin, phase_ymax)
+    
     try:
         gm, pm, wg, wp = ctrl.margin(G)
     except:
@@ -416,8 +488,12 @@ try:
     
     fig_bode.update_xaxes(type="log", title_text="Frequency (rad/s)", row=1, col=1)
     fig_bode.update_xaxes(type="log", title_text="Frequency (rad/s)", row=2, col=1)
-    fig_bode.update_yaxes(title_text="Magnitude (dB)", row=1, col=1)
-    fig_bode.update_yaxes(title_text="Phase (degrees)", row=2, col=1)
+    fig_bode.update_yaxes(title_text="Magnitude (dB)", row=1, col=1, range=[mag_ymin, mag_ymax])
+    fig_bode.update_yaxes(title_text="Phase (degrees)", row=2, col=1, 
+                         range=[phase_ymin_aligned, phase_ymax_aligned],
+                         tickmode='array',
+                         tickvals=phase_ticks_45,
+                         ticktext=[f"{int(tick)}°" for tick in phase_ticks_45])
     fig_bode.update_layout(template='plotly_white', height=600)
     
     st.plotly_chart(fig_bode, use_container_width=True)

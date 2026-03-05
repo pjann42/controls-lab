@@ -223,7 +223,12 @@ try:
         st.subheader("Open-Loop Transfer Function G(s)")
         num_str = format_polynomial(num)
         den_str = format_polynomial(den)
-        st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}}")
+        
+        # Add "= 1" to LaTeX if coefficients are identical
+        if validation_result.get('identical_coeffs', False):
+            st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}} = 1")
+        else:
+            st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}}")
         
     with col2:
         st.subheader("Closed-Loop Transfer Function T(s)")
@@ -231,20 +236,40 @@ try:
         T_num, T_den = ctrl.tfdata(T)
         T_num_str = format_polynomial(T_num[0][0].tolist())
         T_den_str = format_polynomial(T_den[0][0].tolist())
-        st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
+        
+        # Add "= 0.5" to LaTeX if coefficients are identical
+        if validation_result.get('identical_coeffs', False):
+            st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}} = 0.5")
+        else:
+            st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
     
     # Display validation info
     st.info(f"✅ {validation_result['message']}")
     
     # Special message for identical numerator and denominator
     if validation_result.get('identical_coeffs', False):
-        st.info("""
-        This transfer function represents a biproper system where the numerator and denominator polynomials 
+        st.markdown("""
+        **Unity Gain System Analysis**: This transfer function represents a biproper system where the numerator and denominator polynomials 
         are identical, simplifying mathematically to a unity gain of $H(s) = 1$. Technically, the system acts 
         as a transparent channel with a flat frequency response that passes all signals without any delay 
         or high frequency filtering. In practice, perfect pole-zero cancellation is nearly impossible to maintain 
         because any slight coefficient mismatch creates a doublet that introduces unwanted transients or instability.
+        
+        With unity feedback, the closed-loop transfer function is:
+        
+        $$
+        T(s) = \\frac{H(s)}{1 + H(s)}
+        $$
+        
+        Since $H(s) = 1$, the closed-loop gain becomes:
+        
+        $$
+        T(s) = 0.5
+        $$
+        
+        meaning the output follows the input with half the amplitude.
         """)
+        st.stop()  # Stop further analysis for unity gain system
     
     st.header("Stability Analysis")
     st.caption("Using Closed-Loop Transfer Function T(s)")

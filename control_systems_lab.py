@@ -348,11 +348,30 @@ try:
     
     # Generate frequency response data using proper method
     w = np.logspace(-2, 2, 1000)  # 0.01 to 100 rad/s
-    mag, phase, w_out = ctrl.bode(G, w, plot=False)
     
-    # The phase from bode is already in degrees
-    mag_db = 20 * np.log10(mag)
-    phase_deg = phase
+    # Get transfer function coefficients for manual calculation
+    G_num, G_den = ctrl.tfdata(G)
+    G_num = G_num[0][0]
+    G_den = G_den[0][0]
+    
+    # Manual frequency response calculation
+    s = 1j * w  # s = jω
+    G_jw_num = np.polyval(G_num, s)
+    G_jw_den = np.polyval(G_den, s)
+    G_jw = G_jw_num / G_jw_den
+    
+    # Convert magnitude to dB
+    mag_abs = np.abs(G_jw)
+    mag_db = 20 * np.log10(mag_abs)
+    
+    # Calculate phase using atan2 for correct quadrant logic
+    phase_rad = np.arctan2(np.imag(G_jw), np.real(G_jw))
+    
+    # Phase unwrapping to remove 2π discontinuities
+    phase_unwrapped = np.unwrap(phase_rad)
+    
+    # Convert to degrees
+    phase_deg = np.degrees(phase_unwrapped)
     
     try:
         gm, pm, wg, wp = ctrl.margin(G)

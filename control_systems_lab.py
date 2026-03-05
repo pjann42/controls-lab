@@ -482,11 +482,19 @@ try:
         
         with col4:
             st.subheader("Step Response Metrics")
-            st.metric("Rise Time", f"{step_info.get('RiseTime', 'N/A'):.3f} s")
-            st.metric("Settling Time", f"{step_info.get('SettlingTime', 'N/A'):.3f} s")
-            st.metric("Overshoot", f"{step_info.get('Overshoot', 0):.3f}%")
-            st.metric("Peak", f"{step_info.get('Peak', 'N/A'):.3f}")
-            st.metric("Peak Time", f"{step_info.get('PeakTime', 'N/A'):.3f} s")
+            
+            # Create two columns for metrics
+            metric_col1, metric_col2 = st.columns(2)
+            
+            with metric_col1:
+                st.metric("Rise Time", f"{step_info.get('RiseTime', 'N/A'):.3f} s")
+                st.metric("Settling Time", f"{step_info.get('SettlingTime', 'N/A'):.3f} s")
+                st.metric("Overshoot", f"{step_info.get('Overshoot', 0):.3f}%")
+            
+            with metric_col2:
+                st.metric("Peak", f"{step_info.get('Peak', 'N/A'):.3f}")
+                st.metric("Peak Time", f"{step_info.get('PeakTime', 'N/A'):.3f} s")
+                st.metric("Steady-State Value", f"{y[-1]:.3f}")
     else:
         st.warning("⚠️ Time Domain Analysis skipped for unstable systems")
         st.caption("Step response analysis is not meaningful for unstable systems")

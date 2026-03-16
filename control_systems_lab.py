@@ -1,676 +1,464 @@
-import streamlit as st
 import numpy as np
+import streamlit as st
 import control as ctrl
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-def validate_and_create_system(num_coeffs, den_coeffs):
-    """
-    Validate transfer function realizability and create system if valid.
-    
-    Args:
-        num_coeffs: Numerator coefficients (list or array)
-        den_coeffs: Denominator coefficients (list or array)
-    
-    Returns:
-        dict: System object and validation status
-    """
-    # Input validation
-    if not num_coeffs or not den_coeffs:
-        return {
-            'valid': False,
-            'message': 'Empty coefficient arrays provided',
-            'system': None
-        }
-    
-    try:
-        # Convert to numpy arrays
-        num_array = np.array(num_coeffs, dtype=float)
-        den_array = np.array(den_coeffs, dtype=float)
-        
-        # Calculate polynomial degrees
-        num_degree = len(num_coeffs) - 1
-        den_degree = len(den_coeffs) - 1
-        
-        # Remove leading zeros for accurate degree calculation
-        while len(num_array) > 1 and abs(num_array[0]) < 1e-10:
-            num_array = num_array[1:]
-            num_degree -= 1
-            
-        while len(den_array) > 1 and abs(den_array[0]) < 1e-10:
-            den_array = den_array[1:]
-            den_degree -= 1
-        
-        # Core realizability check: n ≤ d
-        if num_degree > den_degree:
-            return {
-                'valid': False,
-                'message': 'The system is non-realizable and has no physical meaning (Improper System)',
-                'system': None,
-                'num_degree': num_degree,
-                'den_degree': den_degree,
-                'improper_system': True
-            }
-        
-        # Create transfer function if valid
-        G = ctrl.TransferFunction(num_array, den_array)
-        
-        # Check if numerator and denominator are identical
-        identical_coeffs = np.array_equal(num_array, den_array)
-        
-        return {
-            'valid': True,
-            'message': 'System is realizable and physically meaningful',
-            'system': G,
-            'num_degree': num_degree,
-            'den_degree': den_degree,
-            'poles': ctrl.pole(G),
-            'zeros': ctrl.zero(G),
-            'identical_coeffs': identical_coeffs
-        }
-        
-    except Exception as e:
-        return {
-            'valid': False,
-            'message': f'Error creating system: {str(e)}',
-            'system': None
-        }
+from core.transfer_function import validate_and_create_system
+from core.stability import classify_stability
+from core.frequency import compute_frequency_response, compute_margins, smart_autoscale, align_phase_axis_45_deg
+from core.formatting import format_polynomial, format_metric, clean_coefficients
 
-# Ensure compatibility with NumPy 2.0
+# NumPy 2.0 compatibility shim
 np.NaN = np.nan
 np.Inf = np.inf
 
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
 st.set_page_config(page_title="Control Systems Laboratory", layout="wide", initial_sidebar_state="expanded")
-
 st.title("Control Systems Laboratory")
 st.markdown("Analyze open-loop transfer functions G(s) under unity feedback")
 
+# ---------------------------------------------------------------------------
+# Sidebar — system configuration
+# ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("System Configuration")
-    
     mode = st.radio("System Mode", ["Custom Transfer Function", "Canonical Second-Order System"])
-    
+
     if mode == "Custom Transfer Function":
-        st.subheader("Transfer Function Coefficients")
+        st.subheader("Plant G(s) Coefficients")
         numerator_input = st.text_input("Numerator Coefficients", "1", help="Enter comma-separated values")
         denominator_input = st.text_input("Denominator Coefficients", "1,1", help="Enter comma-separated values")
-        
+
         try:
-            num = [float(x.strip()) for x in numerator_input.split(',') if x.strip()]
-            den = [float(x.strip()) for x in denominator_input.split(',') if x.strip()]
-        except:
+            num = [float(x.strip()) for x in numerator_input.split(",") if x.strip()]
+            den = [float(x.strip()) for x in denominator_input.split(",") if x.strip()]
+        except ValueError:
             st.error("Invalid coefficient format")
             st.stop()
     else:
         st.subheader("Second-Order Parameters")
         zeta_input = st.text_input("Damping Ratio (ζ)", "0.5", help="Enter damping ratio value")
         wn_input = st.text_input("Natural Frequency (ωn)", "1.0", help="Enter natural frequency value")
-        
+
         try:
             zeta = float(zeta_input.strip())
             wn = float(wn_input.strip())
-            
-            if zeta < 0:
-                st.error("Damping ratio must be non-negative")
-                st.stop()
-            if wn <= 0:
-                st.error("Natural frequency must be positive")
-                st.stop()
-                
-            num = [wn**2]
-            den = [1, 2*zeta*wn, wn**2]
         except ValueError:
             st.error("Invalid input format. Please enter numeric values.")
             st.stop()
-    
+
+        if zeta < 0:
+            st.error("Damping ratio must be non-negative")
+            st.stop()
+        if wn <= 0:
+            st.error("Natural frequency must be positive")
+            st.stop()
+
+        num = [wn**2]
+        den = [1, 2 * zeta * wn, wn**2]
+
+    # -----------------------------------------------------------------------
+    # Controller C(s) — optional
+    # -----------------------------------------------------------------------
+    st.markdown("---")
+    use_controller = st.checkbox("Add Controller C(s)")
+
+    controller_num = [1]
+    controller_den = [1]
+
+    if use_controller:
+        st.subheader("Controller C(s) Coefficients")
+        ctrl_num_input = st.text_input("C(s) Numerator", "1", help="Enter comma-separated values", key="ctrl_num")
+        ctrl_den_input = st.text_input("C(s) Denominator", "1", help="Enter comma-separated values", key="ctrl_den")
+
+        try:
+            controller_num = [float(x.strip()) for x in ctrl_num_input.split(",") if x.strip()]
+            controller_den = [float(x.strip()) for x in ctrl_den_input.split(",") if x.strip()]
+        except ValueError:
+            st.error("Invalid controller coefficient format")
+            st.stop()
+
     st.markdown("---")
     calculate_button = st.button("🔍 Calculate System Analysis", type="primary")
-    
+
     if not calculate_button:
         st.stop()
 
-def format_polynomial(coeffs, variable='s'):
-    if len(coeffs) == 0:
-        return "0"
-    
-    terms = []
-    degree = len(coeffs) - 1
-    
-    for i, coeff in enumerate(coeffs):
-        if coeff == 0:
-            continue
-            
-        power = degree - i
-        if power == 0:
-            term = f"{coeff}"
-        elif power == 1:
-            term = f"{coeff}{variable}" if coeff != 1 else variable
-        else:
-            term = f"{coeff}{variable}^{{{power}}}" if coeff != 1 else f"{variable}^{{{power}}}"
-        
-        terms.append(term)
-    
-    return " + ".join(terms) if terms else "0"
-
-def classify_stability(poles):
-    """
-    Classify system stability based on pole positions in the s-plane.
-    
-    Returns:
-        tuple: (stability_class, description, details)
-    """
-    if poles.size == 0:
-        return "Undefined", "No poles found", "System has no poles to analyze"
-    
-    # Count poles by region
-    left_poles = poles[poles.real < 0]
-    right_poles = poles[poles.real > 0]
-    imag_poles = poles[np.isclose(poles.real, 0, atol=1e-10)]
-    
-    # Count repeated poles on imaginary axis
-    imag_pole_counts = {}
-    for pole in imag_poles:
-        pole_key = f"{pole.real:.6f},{pole.imag:.6f}"
-        imag_pole_counts[pole_key] = imag_pole_counts.get(pole_key, 0) + 1
-    
-    repeated_imag_poles = any(count > 1 for count in imag_pole_counts.values())
-    
-    # Check for pole at origin (s=0)
-    origin_poles = poles[np.isclose(poles.real, 0, atol=1e-10) & np.isclose(poles.imag, 0, atol=1e-10)]
-    origin_pole_count = len(origin_poles)
-    
-    # Stability classification logic
-    if len(right_poles) > 0:
-        return "Unstable", f"Pole(s) in right half-plane: {len(right_poles)}", \
-               f"System has {len(right_poles)} pole(s) with Re(s) > 0"
-    
-    elif repeated_imag_poles:
-        return "Unstable", "Repeated poles on imaginary axis", \
-               f"System has repeated poles on jω axis (including origin)"
-    
-    elif origin_pole_count > 1:
-        return "Unstable", f"Multiple poles at origin: {origin_pole_count}", \
-               f"System has {origin_pole_count} poles at s=0 (integrators)"
-    
-    elif len(left_poles) == poles.size:
-        return "Asymptotically Stable", f"All {len(left_poles)} poles in left half-plane", \
-               f"All poles have Re(s) < 0"
-    
-    elif origin_pole_count == 1 and len(left_poles) == poles.size - 1:
-        return "Marginally Stable", "Single pole at origin", \
-               f"Single integrator (s=0) + {len(left_poles)} stable poles. Note: Step input causes unbounded output"
-    
-    elif len(imag_poles) > 0 and not repeated_imag_poles:
-        return "Marginally Stable", f"Non-repeated poles on imaginary axis: {len(imag_poles)}", \
-               f"System has {len(imag_poles)} simple pole(s) on jω axis"
-    
-    else:
-        return "Undefined", "Mixed pole configuration", "Complex pole arrangement requiring detailed analysis"
-
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
 try:
-    # Validate system before creating transfer function
-    validation_result = validate_and_create_system(num, den)
-    
-    if not validation_result['valid']:
-        st.error(f"⚠️ {validation_result['message']}")
-        
-        # Add comprehensive explanation for improper system
-        if validation_result.get('improper_system', False):
-            # Display the transfer functions even though they're improper
+    # Validate plant G(s)
+    validation = validate_and_create_system(num, den)
+
+    if not validation["valid"]:
+        st.error(f"⚠️ {validation['message']}")
+
+        if validation.get("improper_system"):
             col1, col2 = st.columns(2)
-            
             with col1:
                 st.subheader("Open-Loop Transfer Function G(s)")
-                num_str = format_polynomial(num)
-                den_str = format_polynomial(den)
-                st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}}")
-            
+                st.latex(f"G(s) = \\frac{{{format_polynomial(num)}}}{{{format_polynomial(den)}}}")
             with col2:
                 st.subheader("Closed-Loop Transfer Function T(s)")
-                # For improper systems, we can show the mathematical form but mark it as invalid
-                # T(s) = G(s)/(1+G(s)) would also be improper
-                st.latex(f"T(s) = \\frac{{G(s)}}{{1 + G(s)}}")
-            
-            st.markdown(f"""
-            **Improper Transfer Function**: Your system has numerator degree {validation_result['num_degree']} 
-            and denominator degree {validation_result['den_degree']}. Since {validation_result['num_degree']} > {validation_result['den_degree']}, 
-            this system is **physically impossible**.
-            
-            An improper transfer function violates causality by responding to inputs before they occur, requiring infinite gain at high frequencies. 
-            Real physical systems always contain energy storage elements that limit high-frequency response, ensuring the denominator dominates system dynamics. 
-            For any real system, the numerator degree must be less than or equal to the denominator degree to avoid unbounded behavior where 
-            $|G(j\\omega)| \\to \\infty$ as frequency increases.
-            
-            Physical systems inherently possess finite bandwidth and cannot respond instantaneously or predict future inputs. To achieve physical realizability, 
-            the transfer function must be modified to include additional poles in the denominator or reduce the numerator order, incorporating the neglected 
-            dynamics or energy storage elements that were omitted from the original model.
-            """)
+                st.latex(r"T(s) = \frac{G(s)}{1 + G(s)}")
+
+            st.markdown(
+                f"""
+                **Improper Transfer Function**: Your system has numerator degree {validation['num_degree']}
+                and denominator degree {validation['den_degree']}. Since
+                {validation['num_degree']} > {validation['den_degree']},
+                this system is **physically impossible**.
+
+                An improper transfer function violates causality. To fix it, add poles or reduce the
+                numerator order.
+                """
+            )
         st.stop()
-    
-    G = validation_result['system']
-    T = ctrl.feedback(G, 1)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Open-Loop Transfer Function G(s)")
-        num_str = format_polynomial(num)
-        den_str = format_polynomial(den)
-        
-        # Add "= 1" to LaTeX if coefficients are identical
-        if validation_result.get('identical_coeffs', False):
-            st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}} = 1")
-        else:
-            st.latex(f"G(s) = \\frac{{{num_str}}}{{{den_str}}}")
-        
-    with col2:
-        st.subheader("Closed-Loop Transfer Function T(s)")
-        # Get closed-loop numerator and denominator
-        T_num, T_den = ctrl.tfdata(T)
-        T_num_str = format_polynomial(T_num[0][0].tolist())
-        T_den_str = format_polynomial(T_den[0][0].tolist())
-        
-        # Add "= 0.5" to LaTeX if coefficients are identical
-        if validation_result.get('identical_coeffs', False):
-            st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}} = 0.5")
-        else:
-            st.latex(f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
-    
-    # Display validation info
-    st.info(f"✅ {validation_result['message']}")
-    
-    # Special message for identical numerator and denominator
-    if validation_result.get('identical_coeffs', False):
-        st.markdown("""
-        **Unity Gain System Analysis**: This transfer function represents a biproper system where the numerator and denominator polynomials 
-        are identical, simplifying mathematically to a unity gain of $H(s) = 1$. Technically, the system acts 
-        as a transparent channel with a flat frequency response that passes all signals without any delay 
-        or high frequency filtering. In practice, perfect pole-zero cancellation is nearly impossible to maintain 
-        because any slight coefficient mismatch creates a doublet that introduces unwanted transients or instability.
-        
-        With unity feedback, the closed-loop transfer function is:
-        
-        $$
-        T(s) = \\frac{H(s)}{1 + H(s)}
-        $$
-        
-        Since $H(s) = 1$, the closed-loop gain becomes:
-        
-        $$
-        T(s) = 0.5
-        $$
-        
-        meaning the output follows the input with half the amplitude.
-        """)
-        st.stop()  # Stop further analysis for unity gain system
-    
-    st.header("Stability Analysis")
-    st.caption("Using Closed-Loop Transfer Function T(s)")
-    
-    poles = ctrl.pole(T)  # Use closed-loop poles for stability analysis
-    zeros = ctrl.zero(T)  # Use closed-loop zeros
-    
-    # Classify stability
-    stability_class, stability_desc, stability_details = classify_stability(poles)
-    
-    # Display stability result
-    if stability_class == "Asymptotically Stable":
-        st.success(f"✅ System is {stability_class}")
-    elif stability_class == "Marginally Stable":
-        st.warning(f"⚠️ System is {stability_class}")
-    elif stability_class == "Unstable":
-        st.error(f"❌ System is {stability_class}")
+
+    G = validation["system"]
+
+    # Validate and build controller C(s)
+    if use_controller:
+        ctrl_validation = validate_and_create_system(controller_num, controller_den)
+        if not ctrl_validation["valid"]:
+            st.error(f"⚠️ Controller C(s): {ctrl_validation['message']}")
+            st.stop()
+        C = ctrl_validation["system"]
+        GC = ctrl.series(G, C)
     else:
-        st.info(f"ℹ️ System is {stability_class}")
-    
-    st.caption(stability_details)
-    
-    # Create tabs for Open-Loop and Closed-Loop pole-zero maps
-    tab1, tab2 = st.tabs(["Open-Loop Pole-Zero Map", "Closed-Loop Pole-Zero Map"])
-    
-    with tab1:
-        st.subheader("Open-Loop System G(s)")
-        
-        # Open-loop poles and zeros
-        ol_poles = ctrl.pole(G)
-        ol_zeros = ctrl.zero(G)
-        
-        fig_pz_ol = go.Figure()
-        
-        if ol_poles.size > 0:
-            fig_pz_ol.add_trace(go.Scatter(
-                x=[p.real for p in ol_poles],
-                y=[p.imag for p in ol_poles],
-                mode='markers',
-                name='Open-Loop Poles',
-                marker=dict(symbol='x', size=12, color='red', line=dict(width=2))
-            ))
-        
-        if ol_zeros.size > 0:
-            fig_pz_ol.add_trace(go.Scatter(
-                x=[z.real for z in ol_zeros],
-                y=[z.imag for z in ol_zeros],
-                mode='markers',
-                name='Open-Loop Zeros',
-                marker=dict(symbol='circle', size=10, color='blue', line=dict(width=2))
-            ))
-        
-        fig_pz_ol.add_hline(y=0, line_dash="dot", line_color="gray")
-        fig_pz_ol.add_vline(x=0, line_dash="dot", line_color="gray")
-        
-        max_val_ol = max(max(abs(p.real) for p in ol_poles) if ol_poles.size > 0 else 1, 
-                         max(abs(p.imag) for p in ol_poles) if ol_poles.size > 0 else 1,
-                         max(abs(z.real) for z in ol_zeros) if ol_zeros.size > 0 else 1,
-                         max(abs(z.imag) for z in ol_zeros) if ol_zeros.size > 0 else 1) * 1.2
-        
-        fig_pz_ol.update_layout(
-            title="Open-Loop Pole-Zero Map",
-            xaxis_title="Real Axis",
-            yaxis_title="Imaginary Axis",
-            xaxis=dict(range=[-max_val_ol, max_val_ol]),
-            yaxis=dict(range=[-max_val_ol, max_val_ol]),
-            template='plotly_white',
-            showlegend=True
+        C = None
+        GC = G
+
+    T = ctrl.feedback(GC, 1)
+
+    # -----------------------------------------------------------------------
+    # Transfer function display — always two columns: Open-Loop | Closed-Loop
+    # -----------------------------------------------------------------------
+    T_num, T_den = ctrl.tfdata(T)
+    T_num_str = format_polynomial(clean_coefficients(T_num[0][0].tolist()))
+    T_den_str = format_polynomial(clean_coefficients(T_den[0][0].tolist()))
+
+    GC_num_data, GC_den_data = ctrl.tfdata(GC)
+    GC_num_str = format_polynomial(clean_coefficients(GC_num_data[0][0].tolist()))
+    GC_den_str = format_polynomial(clean_coefficients(GC_den_data[0][0].tolist()))
+
+    def _tf_card(title, latex_str):
+        with st.container(border=True):
+            st.markdown(f"<div style='text-align:center; font-weight:600;'>{title}</div>", unsafe_allow_html=True)
+            st.latex(latex_str)
+
+    if use_controller:
+        c1, c2 = st.columns(2)
+        with c1:
+            _tf_card("Plant G(s)", f"G(s) = \\frac{{{format_polynomial(num)}}}{{{format_polynomial(den)}}}")
+        with c2:
+            _tf_card("Controller C(s)",
+                     f"C(s) = \\frac{{{format_polynomial(controller_num)}}}{{{format_polynomial(controller_den)}}}")
+
+        c3, c4 = st.columns(2)
+        with c3:
+            _tf_card("Open-Loop G(s)C(s)", f"G(s)C(s) = \\frac{{{GC_num_str}}}{{{GC_den_str}}}")
+        with c4:
+            _tf_card("Closed-Loop T(s)", f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}")
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            ol_latex = f"G(s) = \\frac{{{format_polynomial(num)}}}{{{format_polynomial(den)}}}"
+            if validation.get("identical_coeffs"):
+                ol_latex += " = 1"
+            _tf_card("Open-Loop G(s)", ol_latex)
+        with c2:
+            cl_latex = f"T(s) = \\frac{{{T_num_str}}}{{{T_den_str}}}"
+            if validation.get("identical_coeffs"):
+                cl_latex += " = 0.5"
+            _tf_card("Closed-Loop T(s)", cl_latex)
+
+    st.info(f"✅ {validation['message']}")
+
+    # Unity-gain special case (only valid without controller)
+    if validation.get("identical_coeffs") and not use_controller:
+        st.markdown(
+            r"""
+            **Unity Gain System Analysis**: This transfer function simplifies to $H(s) = 1$.
+            With unity feedback the closed-loop gain is:
+
+            $$T(s) = \frac{H(s)}{1 + H(s)} = \frac{1}{2} = 0.5$$
+
+            meaning the output follows the input with half the amplitude.
+            """
         )
-        
-        st.plotly_chart(fig_pz_ol, use_container_width=True)
-        
-        col8, col9 = st.columns(2)
-        with col8:
-            st.subheader("Open-Loop Poles")
-            if ol_poles.size > 0:
-                for i, pole in enumerate(ol_poles):
-                    st.write(f"Pole {i+1}: {pole:.3f}")
-            else:
-                st.write("No poles")
-        
-        with col9:
-            st.subheader("Open-Loop Zeros")
-            if ol_zeros.size > 0:
-                for i, zero in enumerate(ol_zeros):
-                    st.write(f"Zero {i+1}: {zero:.3f}")
-            else:
-                st.write("No zeros")
-    
-    with tab2:
-        st.subheader("Closed-Loop System T(s)")
-        
-        # Closed-loop poles and zeros (for stability analysis)
-        cl_poles = ctrl.pole(T)
-        cl_zeros = ctrl.zero(T)
-        
-        fig_pz_cl = go.Figure()
-        
-        if cl_poles.size > 0:
-            fig_pz_cl.add_trace(go.Scatter(
-                x=[p.real for p in cl_poles],
-                y=[p.imag for p in cl_poles],
-                mode='markers',
-                name='Closed-Loop Poles',
-                marker=dict(symbol='x', size=12, color='darkred', line=dict(width=2))
+        st.stop()
+
+    # ---------------------------------------------------------------------------
+    # Stability Analysis — all components
+    # ---------------------------------------------------------------------------
+    st.header("Stability Analysis")
+
+    # Classify each component
+    g_stab,  _, g_det  = classify_stability(ctrl.pole(G))
+    gc_stab, _, gc_det = classify_stability(ctrl.pole(GC))
+    cl_stab, _, cl_det = classify_stability(ctrl.pole(T))
+    if use_controller:
+        c_stab, _, c_det = classify_stability(ctrl.pole(C))
+
+    def _stab_card(label, stab_class, details):
+        icons = {
+            "Asymptotically Stable": ("✅", "green"),
+            "Marginally Stable":     ("⚠️", "orange"),
+            "Unstable":              ("❌", "red"),
+        }
+        icon, color = icons.get(stab_class, ("ℹ️", "gray"))
+        with st.container(border=True):
+            st.markdown(
+                "<div style='display:flex; flex-direction:column; align-items:center; "
+                "justify-content:center; min-height:90px; padding:8px 4px; text-align:center;'>"
+                f"<div style='font-weight:600; font-size:0.82rem; text-transform:uppercase; "
+                f"letter-spacing:0.04em; color:#555; margin-bottom:6px'>{label}</div>"
+                f"<div style='font-size:1.5rem; line-height:1'>{icon}</div>"
+                f"<div style='color:{color}; font-weight:700; font-size:0.88rem; margin-top:4px'>{stab_class}</div>"
+                f"<div style='color:#999; font-size:0.74rem; margin-top:4px'>{details}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+    if use_controller:
+        ca, cb, cc, cd = st.columns(4)
+        with ca: _stab_card("Plant G(s)",       g_stab,  g_det)
+        with cb: _stab_card("Controller C(s)",  c_stab,  c_det)
+        with cc: _stab_card("Open-Loop G(s)C(s)", gc_stab, gc_det)
+        with cd: _stab_card("Closed-Loop T(s)", cl_stab, cl_det)
+    else:
+        ca, cb, cc = st.columns(3)
+        with ca: _stab_card("Plant G(s)",       g_stab,  g_det)
+        with cb: _stab_card("Open-Loop G(s)",   gc_stab, gc_det)
+        with cc: _stab_card("Closed-Loop T(s)", cl_stab, cl_det)
+
+    # Contextual diagnostic messages
+    if use_controller:
+        if g_stab == "Unstable" and cl_stab == "Asymptotically Stable":
+            st.success("✅ The controller successfully stabilizes the unstable plant.")
+        if g_stab == "Unstable" and cl_stab == "Unstable":
+            st.error("❌ The controller fails to stabilize the unstable plant.")
+        if c_stab == "Unstable" and cl_stab == "Asymptotically Stable":
+            st.warning("⚠️ The controller itself is unstable — the closed loop is stable, but this is fragile in practice.")
+        if c_stab == "Unstable" and cl_stab == "Unstable":
+            st.error("❌ Both the controller and the plant are unstable, and the closed loop did not recover.")
+    if gc_stab == "Unstable" and cl_stab == "Asymptotically Stable":
+        st.info("ℹ️ The open loop is unstable. Gain/Phase margins from Bode require Nyquist analysis for correct interpretation.")
+    if cl_stab == "Marginally Stable":
+        st.warning("⚠️ The closed loop is marginally stable — sustained oscillations may occur for certain inputs.")
+
+    # ---------------------------------------------------------------------------
+    # Pole-Zero Maps
+    # ---------------------------------------------------------------------------
+    def _make_pz_figure(p, z, title, pole_color="red", zero_color="blue"):
+        fig = go.Figure()
+        if p.size > 0:
+            fig.add_trace(go.Scatter(
+                x=[v.real for v in p], y=[v.imag for v in p],
+                mode="markers", name=f"{title} Poles",
+                marker=dict(symbol="x", size=12, color=pole_color, line=dict(width=2)),
             ))
-        
-        if cl_zeros.size > 0:
-            fig_pz_cl.add_trace(go.Scatter(
-                x=[z.real for z in cl_zeros],
-                y=[z.imag for z in cl_zeros],
-                mode='markers',
-                name='Closed-Loop Zeros',
-                marker=dict(symbol='circle', size=10, color='darkblue', line=dict(width=2))
+        if z.size > 0:
+            fig.add_trace(go.Scatter(
+                x=[v.real for v in z], y=[v.imag for v in z],
+                mode="markers", name=f"{title} Zeros",
+                marker=dict(symbol="circle", size=10, color=zero_color, line=dict(width=2)),
             ))
-        
-        fig_pz_cl.add_hline(y=0, line_dash="dot", line_color="gray")
-        fig_pz_cl.add_vline(x=0, line_dash="dot", line_color="gray")
-        
-        max_val_cl = max(max(abs(p.real) for p in cl_poles) if cl_poles.size > 0 else 1, 
-                         max(abs(p.imag) for p in cl_poles) if cl_poles.size > 0 else 1,
-                         max(abs(z.real) for z in cl_zeros) if cl_zeros.size > 0 else 1,
-                         max(abs(z.imag) for z in cl_zeros) if cl_zeros.size > 0 else 1) * 1.2
-        
-        fig_pz_cl.update_layout(
-            title="Closed-Loop Pole-Zero Map",
-            xaxis_title="Real Axis",
-            yaxis_title="Imaginary Axis",
-            xaxis=dict(range=[-max_val_cl, max_val_cl]),
-            yaxis=dict(range=[-max_val_cl, max_val_cl]),
-            template='plotly_white',
-            showlegend=True
+        fig.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig.add_vline(x=0, line_dash="dot", line_color="gray")
+        all_vals = np.concatenate([
+            [abs(v.real) for v in p], [abs(v.imag) for v in p],
+            [abs(v.real) for v in z], [abs(v.imag) for v in z],
+            [1.0],
+        ])
+        limit = float(np.max(all_vals)) * 1.2
+        fig.update_layout(
+            title=f"{title} Pole-Zero Map",
+            xaxis_title="Real Axis", yaxis_title="Imaginary Axis",
+            xaxis=dict(range=[-limit, limit]),
+            yaxis=dict(range=[-limit, limit]),
+            template="plotly_white", showlegend=True,
         )
-        
-        st.plotly_chart(fig_pz_cl, use_container_width=True)
-        
-        col10, col11 = st.columns(2)
-        with col10:
-            st.subheader("Closed-Loop Poles")
-            if cl_poles.size > 0:
-                for i, pole in enumerate(cl_poles):
-                    st.write(f"Pole {i+1}: {pole:.3f}")
-            else:
-                st.write("No poles")
-        
-        with col11:
-            st.subheader("Closed-Loop Zeros")
-            if cl_zeros.size > 0:
-                for i, zero in enumerate(cl_zeros):
-                    st.write(f"Zero {i+1}: {zero:.3f}")
-            else:
-                st.write("No zeros")
-    
-    # Only show Time Domain Analysis for stable systems
-    if stability_class != "Unstable":
-        st.header("Time Domain Analysis")
-        st.caption("Using Closed-Loop Transfer Function T(s)")
-        
+        return fig
+
+    def _metric_card(label, value):
+        with st.container(border=True):
+            st.markdown(
+                "<div style='"
+                "display:flex; flex-direction:column; align-items:center; "
+                "justify-content:center; min-height:68px; padding:6px 4px;'>"
+                f"<div style='color:#888; font-size:0.74rem; text-transform:uppercase; "
+                f"letter-spacing:0.04em; margin-bottom:6px; text-align:center'>{label}</div>"
+                f"<div style='font-size:1.2rem; font-weight:700; text-align:center; "
+                f"line-height:1.2'>{value}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+    def _pz_tab(label, sys_obj, pole_color="red", zero_color="blue"):
+        p, z = ctrl.pole(sys_obj), ctrl.zero(sys_obj)
+        chart_col, info_col = st.columns([3, 1])
+        with chart_col:
+            st.plotly_chart(
+                _make_pz_figure(p, z, label, pole_color, zero_color),
+                use_container_width=True,
+            )
+        with info_col:
+            with st.container(border=True):
+                st.markdown("**Poles**")
+                if p.size > 0:
+                    for i, v in enumerate(p):
+                        st.caption(f"{i+1}: `{v:.3f}`")
+                else:
+                    st.caption("None")
+            with st.container(border=True):
+                st.markdown("**Zeros**")
+                if z.size > 0:
+                    for i, v in enumerate(z):
+                        st.caption(f"{i+1}: `{v:.3f}`")
+                else:
+                    st.caption("None")
+
+    ol_tab_label = "Open-Loop G(s)C(s)" if use_controller else "Open-Loop G(s)"
+    tab_ol, tab_cl = st.tabs([ol_tab_label, "Closed-Loop T(s)"])
+    with tab_ol: _pz_tab(ol_tab_label, GC, "red", "blue")
+    with tab_cl: _pz_tab("Closed-Loop", T, "darkred", "darkblue")
+
+    # convenience alias used by time-domain and Bode sections below
+    stability_class = cl_stab
+
+    # ---------------------------------------------------------------------------
+    # Time Domain Analysis (stable systems only)
+    # ---------------------------------------------------------------------------
+    st.divider()
+    st.header("Time Domain Analysis")
+    st.caption("Using Closed-Loop Transfer Function T(s)")
+
+    if stability_class == "Unstable":
+        st.error("⚠️ Skipped — step response diverges for unstable closed-loop systems")
+    else:
         time = np.linspace(0, 10, 1000)
         t, y = ctrl.step_response(T, time)
-        
         step_info = ctrl.step_info(T)
-        
-        col3, col4 = st.columns([2, 1])
-        
-        with col3:
-            fig_step = go.Figure()
-            fig_step.add_trace(go.Scatter(x=t, y=y, mode='lines', name='Step Response', line=dict(color='blue', width=2)))
-            fig_step.update_layout(
-                title="Step Response",
-                xaxis_title="Time (s)",
-                yaxis_title="Amplitude",
-                hovermode='x unified',
-                template='plotly_white'
+
+        # Only show steady-state line for asymptotically stable systems
+        fig_step = go.Figure()
+        fig_step.add_trace(go.Scatter(
+            x=t, y=y, mode="lines", name="Step Response",
+            line=dict(color="royalblue", width=2),
+        ))
+        if stability_class == "Asymptotically Stable":
+            fig_step.add_hline(y=float(y[-1]), line_dash="dot", line_color="gray",
+                               annotation_text=f"Steady state: {y[-1]:.3f}")
+        fig_step.update_layout(
+            title="Step Response",
+            xaxis_title="Time (s)",
+            yaxis_title="Amplitude",
+            hovermode="x unified",
+            template="plotly_white",
+            height=350,
+        )
+        st.plotly_chart(fig_step, use_container_width=True)
+
+        st.subheader("Step Response Metrics")
+
+        if stability_class == "Marginally Stable":
+            st.info(
+                "ℹ️ Only Peak metrics are shown — Rise Time, Settling Time, Overshoot and "
+                "Steady-State Value are not physically meaningful for marginally stable systems."
             )
-            st.plotly_chart(fig_step, use_container_width=True)
-        
-        with col4:
-            st.subheader("Step Response Metrics")
-            
-            # Create two columns for metrics
-            metric_col1, metric_col2 = st.columns(2)
-            
-            with metric_col1:
-                st.metric("Rise Time", f"{step_info.get('RiseTime', 'N/A'):.3f} s")
-                st.metric("Settling Time", f"{step_info.get('SettlingTime', 'N/A'):.3f} s")
-                st.metric("Overshoot", f"{step_info.get('Overshoot', 0):.3f}%")
-            
-            with metric_col2:
-                st.metric("Peak", f"{step_info.get('Peak', 'N/A'):.3f}")
-                st.metric("Peak Time", f"{step_info.get('PeakTime', 'N/A'):.3f} s")
-                st.metric("Steady-State Value", f"{y[-1]:.3f}")
-    else:
-        st.warning("⚠️ Time Domain Analysis skipped for unstable systems")
-        st.caption("Step response analysis is not meaningful for unstable systems")
-    
-    st.header("Frequency Domain Analysis")
-    st.caption("Using Open-Loop Transfer Function G(s)")
-    
-    # Generate frequency response data using proper method
-    w = np.logspace(-2, 2, 1000)  # 0.01 to 100 rad/s
-    
-    # Get transfer function coefficients for manual calculation
-    G_num, G_den = ctrl.tfdata(G)
-    G_num = G_num[0][0]
-    G_den = G_den[0][0]
-    
-    # Manual frequency response calculation
-    s = 1j * w  # s = jω
-    G_jw_num = np.polyval(G_num, s)
-    G_jw_den = np.polyval(G_den, s)
-    G_jw = G_jw_num / G_jw_den
-    
-    # Convert magnitude to dB
-    mag_abs = np.abs(G_jw)
-    mag_db = 20 * np.log10(mag_abs)
-    
-    # Calculate phase using atan2 for correct quadrant logic
-    phase_rad = np.arctan2(np.imag(G_jw), np.real(G_jw))
-    
-    # Phase unwrapping to remove 2π discontinuities
-    phase_unwrapped = np.unwrap(phase_rad)
-    
-    # Convert to degrees
-    phase_deg = np.degrees(phase_unwrapped)
-    
-    # Smart autoscaling function for Bode plots
-    def smart_autoscale(y_data, padding_factor=0.1, steady_state_threshold=0.01):
-        """
-        Calculate smart Y-axis limits that avoid jittering in steady-state regions.
-        
-        Args:
-            y_data: Data array for axis scaling
-            padding_factor: Percentage of padding around data (default 10%)
-            steady_state_threshold: Threshold for detecting steady-state (default 1%)
-        
-        Returns:
-            tuple: (y_min, y_max) smart axis limits
-        """
-        y_min, y_max = np.min(y_data), np.max(y_data)
-        data_range = y_max - y_min
-        
-        # Detect steady-state regions (small changes)
-        y_diff = np.abs(np.diff(y_data))
-        steady_state_mask = y_diff < (data_range * steady_state_threshold)
-        
-        if np.sum(steady_state_mask) > len(y_data) * 0.3:  # If 30%+ is steady-state
-            # Use extended range with hysteresis for steady-state regions
-            extended_range = data_range * (1 + padding_factor * 2)
-            center = (y_min + y_max) / 2
-            y_min_smart = center - extended_range / 2
-            y_max_smart = center + extended_range / 2
+            # Only Peak and Peak Time make sense
+            raw = [
+                ("Peak",      format_metric(step_info.get("Peak"))),
+                ("Peak Time", f"{format_metric(step_info.get('PeakTime'))} s"),
+            ]
         else:
-            # Normal padding for dynamic regions
-            y_padding = data_range * padding_factor
-            y_min_smart = y_min - y_padding
-            y_max_smart = y_max + y_padding
-        
-        # Add minimum range constraints for visual clarity
-        if data_range < 5:  # For very small ranges
-            y_min_smart = y_min - 2
-            y_max_smart = y_max + 2
-        
-        return y_min_smart, y_max_smart
-    
-    # Calculate smart axis limits
+            # Asymptotically Stable: all 6 metrics, drop any that are N/A
+            raw = [
+                ("Rise Time",     f"{format_metric(step_info.get('RiseTime'))} s"),
+                ("Settling Time", f"{format_metric(step_info.get('SettlingTime'))} s"),
+                ("Overshoot",     f"{format_metric(step_info.get('Overshoot', 0))}%"),
+                ("Peak",          format_metric(step_info.get("Peak"))),
+                ("Peak Time",     f"{format_metric(step_info.get('PeakTime'))} s"),
+                ("Steady State",  format_metric(y[-1])),
+            ]
+
+        valid = [(lbl, val) for lbl, val in raw if "N/A" not in val]
+        if valid:
+            cols = st.columns(len(valid))
+            for col, (lbl, val) in zip(cols, valid):
+                with col:
+                    _metric_card(lbl, val)
+
+    # ---------------------------------------------------------------------------
+    # Frequency Domain Analysis
+    # ---------------------------------------------------------------------------
+    st.divider()
+    st.header("Frequency Domain Analysis")
+    ol_caption = "Using Open-Loop G(s)C(s)" if use_controller else "Using Open-Loop G(s)"
+    st.caption(ol_caption)
+
+    if gc_stab == "Unstable":
+        st.warning("⚠️ Open loop is unstable — Gain/Phase margins require Nyquist analysis for correct interpretation")
+
+    w, mag_db, phase_deg = compute_frequency_response(GC)
+    gm, pm, wg, wp = compute_margins(GC)
+
     mag_ymin, mag_ymax = smart_autoscale(mag_db, padding_factor=0.15, steady_state_threshold=0.02)
     phase_ymin, phase_ymax = smart_autoscale(phase_deg, padding_factor=0.15, steady_state_threshold=0.02)
-    
-    # Force phase axis to strict 45-degree intervals
-    def align_phase_axis_45_deg(phase_min, phase_max):
-        """
-        Align phase axis limits to strict 45-degree intervals.
-        
-        Args:
-            phase_min: Minimum phase value in degrees
-            phase_max: Maximum phase value in degrees
-        
-        Returns:
-            tuple: (aligned_min, aligned_max, tick_values)
-        """
-        # Extend range to ensure 45-degree coverage
-        range_extension = 45  # One extra 45-degree step on each side
-        
-        # Snap min down to nearest 45-degree multiple
-        aligned_min = round((phase_min - range_extension) / 45) * 45
-        
-        # Snap max up to nearest 45-degree multiple
-        aligned_max = round((phase_max + range_extension) / 45) * 45
-        
-        # Generate tick marks at exact 45-degree intervals
-        tick_values = np.arange(aligned_min, aligned_max + 45, 45)
-        
-        return aligned_min, aligned_max, tick_values.tolist()
-    
-    # Apply 45-degree alignment to phase axis
     phase_ymin_aligned, phase_ymax_aligned, phase_ticks_45 = align_phase_axis_45_deg(phase_ymin, phase_ymax)
-    
-    try:
-        gm, pm, wg, wp = ctrl.margin(G)
-    except:
-        gm, pm, wg, wp = np.nan, np.nan, np.nan, np.nan
 
-    # Handle infinite values
-    if not isinstance(gm, (int, float)) or np.isinf(gm):
-        gm = np.nan
-    if not isinstance(pm, (int, float)) or np.isinf(pm):
-        pm = np.nan
-    if not isinstance(wg, (int, float)) or np.isinf(wg):
-        wg = np.nan
-    if not isinstance(wp, (int, float)) or np.isinf(wp):
-        wp = np.nan
-    
-    fig_bode = make_subplots(
-        rows=2, cols=1,
-        subplot_titles=('Magnitude', 'Phase'),
-        vertical_spacing=0.1
-    )
-    
-    fig_bode.add_trace(
-        go.Scatter(x=w, y=mag_db, mode='lines', name='Magnitude', line=dict(color='blue')),
-        row=1, col=1
-    )
-    
+    # — Magnitude —
+    st.subheader("Magnitude")
+    fig_mag = go.Figure()
+    fig_mag.add_trace(go.Scatter(x=w, y=mag_db, mode="lines", name="Magnitude",
+                                 line=dict(color="royalblue", width=2)))
     if not np.isnan(gm) and not np.isnan(wg):
-        fig_bode.add_vline(x=wg, line_dash="dash", line_color="red", annotation_text=f"GM: {20*np.log10(gm):.1f} dB", row=1, col=1)
-    
-    fig_bode.add_hline(y=0, line_dash="dot", line_color="gray", row=1, col=1)
-    
-    fig_bode.add_trace(
-        go.Scatter(x=w, y=phase_deg, mode='lines', name='Phase', line=dict(color='green')),
-        row=2, col=1
+        fig_mag.add_vline(x=wg, line_dash="dash", line_color="crimson", line_width=1.5)
+    fig_mag.add_hline(y=0, line_dash="dot", line_color="gray", annotation_text="0 dB",
+                      annotation_position="bottom right")
+    fig_mag.update_layout(
+        xaxis=dict(type="log", title="Frequency (rad/s)"),
+        yaxis=dict(title="Magnitude (dB)", range=[mag_ymin, mag_ymax]),
+        template="plotly_white", height=300, margin=dict(t=30),
+        hovermode="x unified",
     )
-    
+    st.plotly_chart(fig_mag, use_container_width=True)
+
+    # — Phase —
+    st.subheader("Phase")
+    fig_phase = go.Figure()
+    fig_phase.add_trace(go.Scatter(x=w, y=phase_deg, mode="lines", name="Phase",
+                                   line=dict(color="seagreen", width=2)))
     if not np.isnan(pm) and not np.isnan(wp):
-        fig_bode.add_vline(x=wp, line_dash="dash", line_color="red", annotation_text=f"PM: {pm:.1f}°", row=2, col=1)
-    
-    fig_bode.add_hline(y=-180, line_dash="dot", line_color="gray", row=2, col=1)
-    
-    fig_bode.update_xaxes(type="log", title_text="Frequency (rad/s)", row=1, col=1)
-    fig_bode.update_xaxes(type="log", title_text="Frequency (rad/s)", row=2, col=1)
-    fig_bode.update_yaxes(title_text="Magnitude (dB)", row=1, col=1, range=[mag_ymin, mag_ymax])
-    fig_bode.update_yaxes(title_text="Phase (degrees)", row=2, col=1, 
-                         range=[phase_ymin_aligned, phase_ymax_aligned],
-                         tickmode='array',
-                         tickvals=phase_ticks_45,
-                         ticktext=[f"{int(tick)}°" for tick in phase_ticks_45])
-    fig_bode.update_layout(template='plotly_white', height=600)
-    
-    st.plotly_chart(fig_bode, use_container_width=True)
-    
-    col5, col6, col7 = st.columns(3)
-    with col5:
-        if not np.isnan(gm):
-            st.metric("Gain Margin", f"{20*np.log10(gm):.3f} dB")
-        else:
-            st.metric("Gain Margin", "∞")
-    with col6:
-        if not np.isnan(pm):
-            st.metric("Phase Margin", f"{pm:.3f}°")
-        else:
-            st.metric("Phase Margin", "N/A")
-    with col7:
-        if not np.isnan(wp):
-            st.metric("Crossover Frequency", f"{wp:.3f} rad/s")
-        else:
-            st.metric("Crossover Frequency", "N/A")
+        fig_phase.add_vline(x=wp, line_dash="dash", line_color="crimson", line_width=1.5)
+    fig_phase.add_hline(y=-180, line_dash="dot", line_color="gray", annotation_text="-180°",
+                        annotation_position="bottom right")
+    fig_phase.update_layout(
+        xaxis=dict(type="log", title="Frequency (rad/s)"),
+        yaxis=dict(
+            title="Phase (degrees)",
+            range=[phase_ymin_aligned, phase_ymax_aligned],
+            tickmode="array",
+            tickvals=phase_ticks_45,
+            ticktext=[f"{int(t)}°" for t in phase_ticks_45],
+        ),
+        template="plotly_white", height=300, margin=dict(t=30),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_phase, use_container_width=True)
+
+    # — Stability Margins —
+    st.subheader("Stability Margins")
+    sm1, sm2, sm3 = st.columns(3)
+    with sm1: _metric_card("Gain Margin",          f"{20*np.log10(gm):.3f} dB" if not np.isnan(gm) else "∞")
+    with sm2: _metric_card("Phase Margin",         f"{pm:.3f}°"                if not np.isnan(pm) else "N/A")
+    with sm3: _metric_card("Crossover Frequency",  f"{wp:.3f} rad/s"           if not np.isnan(wp) else "N/A")
 
 except Exception as e:
-    st.error(f"Error: {str(e)}")
+    st.error(f"Error: {e}")
     st.stop()

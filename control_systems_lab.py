@@ -1,12 +1,13 @@
 import numpy as np
 import streamlit as st
 import control as ctrl
-import plotly.graph_objects as go
 
 from core.transfer_function import validate_and_create_system
 from core.stability import classify_stability
 from core.frequency import compute_frequency_response, compute_margins, smart_autoscale, align_phase_axis_45_deg
 from core.formatting import format_polynomial, format_metric, clean_coefficients
+from ui.components import _tf_card, _stab_card, _metric_card, _pz_tab
+from ui.plots import build_step_figure, build_magnitude_figure, build_phase_figure
 
 # NumPy 2.0 compatibility shim
 np.NaN = np.nan
@@ -200,11 +201,6 @@ try:
     GC_num_str = format_polynomial(clean_coefficients(GC_num_data[0][0].tolist()))
     GC_den_str = format_polynomial(clean_coefficients(GC_den_data[0][0].tolist()))
 
-    def _tf_card(title, latex_str):
-        with st.container(border=True):
-            st.markdown(f"<div style='text-align:center; font-weight:600;'>{title}</div>", unsafe_allow_html=True)
-            st.latex(latex_str)
-
     if use_controller:
         c1, c2 = st.columns(2)
         with c1:
@@ -252,35 +248,13 @@ try:
     # ---------------------------------------------------------------------------
     st.header("Stability Analysis")
 
-    # Classify each component
     g_stab,  _, g_det  = classify_stability(ctrl.poles(G))
     gc_stab, _, gc_det = classify_stability(ctrl.poles(GC))
     cl_stab, _, cl_det = classify_stability(ctrl.poles(T))
     if use_controller:
         c_stab, _, c_det = classify_stability(ctrl.poles(C))
 
-    def _stab_card(label, stab_class, details):
-        icons = {
-            "Asymptotically Stable": ("✅", "green"),
-            "Marginally Stable":     ("⚠️", "orange"),
-            "Unstable":              ("❌", "red"),
-        }
-        icon, color = icons.get(stab_class, ("ℹ️", "gray"))
-        with st.container(border=True):
-            st.markdown(
-                "<div style='display:flex; flex-direction:column; align-items:center; "
-                "justify-content:center; min-height:90px; padding:8px 4px; text-align:center;'>"
-                f"<div style='font-weight:600; font-size:0.82rem; text-transform:uppercase; "
-                f"letter-spacing:0.04em; color:#555; margin-bottom:6px'>{label}</div>"
-                f"<div style='font-size:1.5rem; line-height:1'>{icon}</div>"
-                f"<div style='color:{color}; font-weight:700; font-size:0.88rem; margin-top:4px'>{stab_class}</div>"
-                f"<div style='color:#999; font-size:0.74rem; margin-top:4px'>{details}</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
     if use_controller:
-        # 2 per row → wraps to 2×2 on mobile via CSS
         ca, cb = st.columns(2)
         with ca: _stab_card("Plant G(s)",         g_stab,  g_det)
         with cb: _stab_card("Controller C(s)",    c_stab,  c_det)
@@ -311,80 +285,11 @@ try:
     # ---------------------------------------------------------------------------
     # Pole-Zero Maps
     # ---------------------------------------------------------------------------
-    def _make_pz_figure(p, z, title, pole_color="red", zero_color="blue"):
-        fig = go.Figure()
-        if p.size > 0:
-            fig.add_trace(go.Scatter(
-                x=[v.real for v in p], y=[v.imag for v in p],
-                mode="markers", name=f"{title} Poles",
-                marker=dict(symbol="x", size=12, color=pole_color, line=dict(width=2)),
-            ))
-        if z.size > 0:
-            fig.add_trace(go.Scatter(
-                x=[v.real for v in z], y=[v.imag for v in z],
-                mode="markers", name=f"{title} Zeros",
-                marker=dict(symbol="circle", size=10, color=zero_color, line=dict(width=2)),
-            ))
-        fig.add_hline(y=0, line_dash="dot", line_color="gray")
-        fig.add_vline(x=0, line_dash="dot", line_color="gray")
-        all_vals = np.concatenate([
-            [abs(v.real) for v in p], [abs(v.imag) for v in p],
-            [abs(v.real) for v in z], [abs(v.imag) for v in z],
-            [1.0],
-        ])
-        limit = float(np.max(all_vals)) * 1.2
-        fig.update_layout(
-            title=f"{title} Pole-Zero Map",
-            xaxis_title="Real Axis", yaxis_title="Imaginary Axis",
-            xaxis=dict(range=[-limit, limit]),
-            yaxis=dict(range=[-limit, limit]),
-            template="plotly_white", showlegend=True,
-        )
-        return fig
-
-    def _metric_card(label, value):
-        with st.container(border=True):
-            st.markdown(
-                "<div style='"
-                "display:flex; flex-direction:column; align-items:center; "
-                "justify-content:center; min-height:68px; padding:6px 4px;'>"
-                f"<div style='color:#888; font-size:0.74rem; text-transform:uppercase; "
-                f"letter-spacing:0.04em; margin-bottom:6px; text-align:center'>{label}</div>"
-                f"<div style='font-size:1.2rem; font-weight:700; text-align:center; "
-                f"line-height:1.2'>{value}</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-    def _pz_tab(label, sys_obj, pole_color="red", zero_color="blue"):
-        p, z = ctrl.poles(sys_obj), ctrl.zeros(sys_obj)
-        chart_col, info_col = st.columns([3, 1])
-        with chart_col:
-            fig = _make_pz_figure(p, z, label, pole_color, zero_color)
-            fig.update_layout(height=380)
-            st.plotly_chart(fig, use_container_width=True)
-        with info_col:
-            with st.container(border=True):
-                st.markdown("**Poles**")
-                if p.size > 0:
-                    for i, v in enumerate(p):
-                        st.caption(f"{i+1}: `{v:.3f}`")
-                else:
-                    st.caption("None")
-            with st.container(border=True):
-                st.markdown("**Zeros**")
-                if z.size > 0:
-                    for i, v in enumerate(z):
-                        st.caption(f"{i+1}: `{v:.3f}`")
-                else:
-                    st.caption("None")
-
     ol_tab_label = "Open-Loop G(s)C(s)" if use_controller else "Open-Loop G(s)"
     tab_ol, tab_cl = st.tabs([ol_tab_label, "Closed-Loop T(s)"])
     with tab_ol: _pz_tab(ol_tab_label, GC, "red", "blue")
     with tab_cl: _pz_tab("Closed-Loop", T, "darkred", "darkblue")
 
-    # convenience alias used by time-domain and Bode sections below
     stability_class = cl_stab
 
     # ---------------------------------------------------------------------------
@@ -401,24 +306,7 @@ try:
         t, y = ctrl.step_response(T, time)
         step_info = ctrl.step_info(T)
 
-        # Only show steady-state line for asymptotically stable systems
-        fig_step = go.Figure()
-        fig_step.add_trace(go.Scatter(
-            x=t, y=y, mode="lines", name="Step Response",
-            line=dict(color="royalblue", width=2),
-        ))
-        if stability_class == "Asymptotically Stable":
-            fig_step.add_hline(y=float(y[-1]), line_dash="dot", line_color="gray",
-                               annotation_text=f"Steady state: {y[-1]:.3f}")
-        fig_step.update_layout(
-            title="Step Response",
-            xaxis_title="Time (s)",
-            yaxis_title="Amplitude",
-            hovermode="x unified",
-            template="plotly_white",
-            height=350,
-        )
-        st.plotly_chart(fig_step, use_container_width=True)
+        st.plotly_chart(build_step_figure(t, y, stability_class), use_container_width=True)
 
         st.subheader("Step Response Metrics")
 
@@ -427,13 +315,11 @@ try:
                 "ℹ️ Only Peak metrics are shown — Rise Time, Settling Time, Overshoot and "
                 "Steady-State Value are not physically meaningful for marginally stable systems."
             )
-            # Only Peak and Peak Time make sense
             raw = [
                 ("Peak",      format_metric(step_info.get("Peak"))),
                 ("Peak Time", f"{format_metric(step_info.get('PeakTime'))} s"),
             ]
         else:
-            # Asymptotically Stable: all 6 metrics, drop any that are N/A
             raw = [
                 ("Rise Time",     f"{format_metric(step_info.get('RiseTime'))} s"),
                 ("Settling Time", f"{format_metric(step_info.get('SettlingTime'))} s"),
@@ -445,7 +331,6 @@ try:
 
         valid = [(lbl, val) for lbl, val in raw if "N/A" not in val]
         if valid:
-            # Max 3 per row so cards stay readable on mobile
             for row_start in range(0, len(valid), 3):
                 row = valid[row_start:row_start + 3]
                 cols = st.columns(len(row))
@@ -471,47 +356,12 @@ try:
     phase_ymin, phase_ymax = smart_autoscale(phase_deg, padding_factor=0.15, steady_state_threshold=0.02)
     phase_ymin_aligned, phase_ymax_aligned, phase_ticks_45 = align_phase_axis_45_deg(phase_ymin, phase_ymax)
 
-    # — Magnitude —
     st.subheader("Magnitude")
-    fig_mag = go.Figure()
-    fig_mag.add_trace(go.Scatter(x=w, y=mag_db, mode="lines", name="Magnitude",
-                                 line=dict(color="royalblue", width=2)))
-    if not np.isnan(gm) and not np.isnan(wg):
-        fig_mag.add_vline(x=wg, line_dash="dash", line_color="crimson", line_width=1.5)
-    fig_mag.add_hline(y=0, line_dash="dot", line_color="gray", annotation_text="0 dB",
-                      annotation_position="bottom right")
-    fig_mag.update_layout(
-        xaxis=dict(type="log", title="Frequency (rad/s)"),
-        yaxis=dict(title="Magnitude (dB)", range=[mag_ymin, mag_ymax]),
-        template="plotly_white", height=300, margin=dict(t=30),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig_mag, use_container_width=True)
+    st.plotly_chart(build_magnitude_figure(w, mag_db, mag_ymin, mag_ymax, gm, wg), use_container_width=True)
 
-    # — Phase —
     st.subheader("Phase")
-    fig_phase = go.Figure()
-    fig_phase.add_trace(go.Scatter(x=w, y=phase_deg, mode="lines", name="Phase",
-                                   line=dict(color="seagreen", width=2)))
-    if not np.isnan(pm) and not np.isnan(wp):
-        fig_phase.add_vline(x=wp, line_dash="dash", line_color="crimson", line_width=1.5)
-    fig_phase.add_hline(y=-180, line_dash="dot", line_color="gray", annotation_text="-180°",
-                        annotation_position="bottom right")
-    fig_phase.update_layout(
-        xaxis=dict(type="log", title="Frequency (rad/s)"),
-        yaxis=dict(
-            title="Phase (degrees)",
-            range=[phase_ymin_aligned, phase_ymax_aligned],
-            tickmode="array",
-            tickvals=phase_ticks_45,
-            ticktext=[f"{int(t)}°" for t in phase_ticks_45],
-        ),
-        template="plotly_white", height=300, margin=dict(t=30),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig_phase, use_container_width=True)
+    st.plotly_chart(build_phase_figure(w, phase_deg, phase_ymin_aligned, phase_ymax_aligned, phase_ticks_45, pm, wp), use_container_width=True)
 
-    # — Stability Margins —
     st.subheader("Stability Margins")
     sm1, sm2, sm3 = st.columns(3)
     with sm1: _metric_card("Gain Margin",          f"{20*np.log10(gm):.3f} dB" if not np.isnan(gm) else "∞")

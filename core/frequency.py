@@ -1,20 +1,65 @@
 import numpy as np
 import control as ctrl
 
+# Number of frequency points used throughout the app.
+_N_POINTS = 1000
 
-def compute_frequency_response(G, w=None):
-    """
-    Compute Bode magnitude (dB) and phase (degrees) for transfer function G.
+
+def _adaptive_frequency_grid(G, n_points=_N_POINTS):
+    """Return a log-spaced frequency grid adapted to the poles and zeros of G.
+
+    The range is determined by taking the minimum and maximum of the
+    pole/zero magnitudes (ignoring values at the origin which would give
+    zero magnitude) and then adding 2 decades of margin on each side.
+    If no finite, non-zero poles or zeros exist the function falls back to
+    the legacy ``[1e-2, 1e2]`` decade range.
 
     Args:
         G: control.TransferFunction
-        w: frequency array in rad/s (optional; defaults to logspace(-2, 2, 1000))
+        n_points: number of frequency points (default 1000)
+
+    Returns:
+        numpy.ndarray of length ``n_points``
+    """
+    poles = ctrl.poles(G)
+    zeros = ctrl.zeros(G)
+
+    magnitudes = []
+    for v in np.concatenate([poles, zeros]):
+        m = abs(v)
+        if m > 0 and np.isfinite(m):
+            magnitudes.append(m)
+
+    if magnitudes:
+        w_min = min(magnitudes) / 1e2   # 2 decades below smallest feature
+        w_max = max(magnitudes) * 1e2   # 2 decades above largest feature
+        # Clamp to sensible absolute limits so purely-DC systems still plot
+        w_min = max(w_min, 1e-4)
+        w_max = min(w_max, 1e6)
+    else:
+        # No finite non-zero poles or zeros — use legacy range
+        w_min, w_max = 1e-2, 1e2
+
+    return np.logspace(np.log10(w_min), np.log10(w_max), n_points)
+
+
+def compute_frequency_response(G, w=None):
+    """Compute Bode magnitude (dB) and phase (degrees) for transfer function G.
+
+    When ``w`` is *not* supplied the frequency grid is chosen adaptively
+    based on the pole and zero locations of ``G`` — 2 decades of margin are
+    added on each side of the smallest and largest pole/zero magnitudes.
+    The grid always contains exactly 1000 points.
+
+    Args:
+        G: control.TransferFunction
+        w: frequency array in rad/s (optional)
 
     Returns:
         tuple: (w, mag_db, phase_deg)
     """
     if w is None:
-        w = np.logspace(-2, 2, 1000)
+        w = _adaptive_frequency_grid(G, n_points=_N_POINTS)
 
     G_num, G_den = ctrl.tfdata(G)
     num = G_num[0][0]
@@ -30,8 +75,7 @@ def compute_frequency_response(G, w=None):
 
 
 def compute_margins(G):
-    """
-    Compute gain margin, phase margin, and crossover frequencies for G.
+    """Compute gain margin, phase margin, and crossover frequencies for G.
 
     Returns:
         tuple: (gm, pm, wg, wp) — infinite or non-numeric values are returned as np.nan
@@ -50,8 +94,7 @@ def compute_margins(G):
 
 
 def smart_autoscale(y_data, padding_factor=0.1, steady_state_threshold=0.01):
-    """
-    Return Y-axis limits that avoid excessive jitter in steady-state regions.
+    """Return Y-axis limits that avoid excessive jitter in steady-state regions.
 
     Args:
         y_data: 1-D array of values to scale
@@ -82,8 +125,7 @@ def smart_autoscale(y_data, padding_factor=0.1, steady_state_threshold=0.01):
 
 
 def align_phase_axis_45_deg(phase_min, phase_max):
-    """
-    Snap phase axis limits to 45-degree multiples and generate tick values.
+    """Snap phase axis limits to 45-degree multiples and generate tick values.
 
     Returns:
         tuple: (aligned_min, aligned_max, tick_values_list)

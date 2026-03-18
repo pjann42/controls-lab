@@ -136,7 +136,7 @@ with st.sidebar:
 
     calculate_button = st.button("🔍 Calculate", type="primary", use_container_width=True)
 
-    st.caption("⚠️ Under active development. Results should be validated against reference tools before use.")
+    st.caption("Under active development — always verify results before use in critical applications.")
 
     if not calculate_button:
         st.stop()

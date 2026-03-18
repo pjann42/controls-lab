@@ -51,8 +51,8 @@ def validate_and_create_system(num_coeffs, den_coeffs):
             "system": G,
             "num_degree": num_degree,
             "den_degree": den_degree,
-            "poles": ctrl.pole(G),
-            "zeros": ctrl.zero(G),
+            "poles": ctrl.poles(G),
+            "zeros": ctrl.zeros(G),
             "identical_coeffs": np.array_equal(num_array, den_array),
         }
 

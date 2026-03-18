@@ -16,6 +16,38 @@ np.Inf = np.inf
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Control Systems Laboratory", layout="wide", initial_sidebar_state="expanded")
+
+# ---------------------------------------------------------------------------
+# Responsive CSS — columns stack on mobile
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+@media (max-width: 768px) {
+    /* Stack all column groups vertically */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="stColumn"] {
+        width: 100% !important;
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+    }
+    /* Tighter card padding on small screens */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        padding: 0.5rem !important;
+    }
+    /* Reduce chart height hints */
+    .js-plotly-plot {
+        max-width: 100% !important;
+    }
+    /* Title font size */
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.1rem !important; }
+    h3 { font-size: 1rem !important;  }
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Control Systems Laboratory")
 st.markdown("Analyze open-loop transfer functions G(s) under unity feedback")
 
@@ -23,65 +55,86 @@ st.markdown("Analyze open-loop transfer functions G(s) under unity feedback")
 # Sidebar — system configuration
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.header("System Configuration")
-    mode = st.radio("System Mode", ["Custom Transfer Function", "Canonical Second-Order System"])
+    st.markdown("## ⚙️ Configuration")
 
-    if mode == "Custom Transfer Function":
-        st.subheader("Plant G(s) Coefficients")
-        numerator_input = st.text_input("Numerator Coefficients", "1", help="Enter comma-separated values")
-        denominator_input = st.text_input("Denominator Coefficients", "1,1", help="Enter comma-separated values")
+    # --- System mode ---
+    mode = st.radio(
+        "System Mode",
+        ["Custom Transfer Function", "Canonical Second-Order System"],
+        label_visibility="collapsed",
+    )
 
-        try:
-            num = [float(x.strip()) for x in numerator_input.split(",") if x.strip()]
-            den = [float(x.strip()) for x in denominator_input.split(",") if x.strip()]
-        except ValueError:
-            st.error("Invalid coefficient format")
-            st.stop()
-    else:
-        st.subheader("Second-Order Parameters")
-        zeta_input = st.text_input("Damping Ratio (ζ)", "0.5", help="Enter damping ratio value")
-        wn_input = st.text_input("Natural Frequency (ωn)", "1.0", help="Enter natural frequency value")
+    # --- Plant G(s) ---
+    with st.container(border=True):
+        st.markdown("**Plant G(s)**")
 
-        try:
-            zeta = float(zeta_input.strip())
-            wn = float(wn_input.strip())
-        except ValueError:
-            st.error("Invalid input format. Please enter numeric values.")
-            st.stop()
+        if mode == "Custom Transfer Function":
+            numerator_input = st.text_input(
+                "Numerator", "1",
+                help="Comma-separated coefficients (highest power first), e.g. 1,2",
+            )
+            denominator_input = st.text_input(
+                "Denominator", "1,1",
+                help="Comma-separated coefficients (highest power first), e.g. 1,3,2",
+            )
 
-        if zeta < 0:
-            st.error("Damping ratio must be non-negative")
-            st.stop()
-        if wn <= 0:
-            st.error("Natural frequency must be positive")
-            st.stop()
+            try:
+                num = [float(x.strip()) for x in numerator_input.split(",") if x.strip()]
+                den = [float(x.strip()) for x in denominator_input.split(",") if x.strip()]
+            except ValueError:
+                st.error("Invalid coefficient format")
+                st.stop()
+        else:
+            zeta_col, wn_col = st.columns(2)
+            with zeta_col:
+                zeta_input = st.text_input("ζ", "0.5", help="Damping ratio (≥ 0)")
+            with wn_col:
+                wn_input = st.text_input("ωn", "1.0", help="Natural frequency (> 0)")
 
-        num = [wn**2]
-        den = [1, 2 * zeta * wn, wn**2]
+            try:
+                zeta = float(zeta_input.strip())
+                wn = float(wn_input.strip())
+            except ValueError:
+                st.error("Invalid input format.")
+                st.stop()
 
-    # -----------------------------------------------------------------------
-    # Controller C(s) — optional
-    # -----------------------------------------------------------------------
-    st.markdown("---")
-    use_controller = st.checkbox("Add Controller C(s)")
+            if zeta < 0:
+                st.error("Damping ratio must be non-negative")
+                st.stop()
+            if wn <= 0:
+                st.error("Natural frequency must be positive")
+                st.stop()
 
-    controller_num = [1]
-    controller_den = [1]
+            num = [wn**2]
+            den = [1, 2 * zeta * wn, wn**2]
 
-    if use_controller:
-        st.subheader("Controller C(s) Coefficients")
-        ctrl_num_input = st.text_input("C(s) Numerator", "1", help="Enter comma-separated values", key="ctrl_num")
-        ctrl_den_input = st.text_input("C(s) Denominator", "1", help="Enter comma-separated values", key="ctrl_den")
+    # --- Controller C(s) ---
+    with st.container(border=True):
+        use_controller = st.checkbox("**Controller C(s)**")
 
-        try:
-            controller_num = [float(x.strip()) for x in ctrl_num_input.split(",") if x.strip()]
-            controller_den = [float(x.strip()) for x in ctrl_den_input.split(",") if x.strip()]
-        except ValueError:
-            st.error("Invalid controller coefficient format")
-            st.stop()
+        controller_num = [1]
+        controller_den = [1]
 
-    st.markdown("---")
-    calculate_button = st.button("🔍 Calculate System Analysis", type="primary")
+        if use_controller:
+            ctrl_num_input = st.text_input(
+                "Numerator", "1",
+                help="Comma-separated coefficients", key="ctrl_num",
+            )
+            ctrl_den_input = st.text_input(
+                "Denominator", "1",
+                help="Comma-separated coefficients", key="ctrl_den",
+            )
+
+            try:
+                controller_num = [float(x.strip()) for x in ctrl_num_input.split(",") if x.strip()]
+                controller_den = [float(x.strip()) for x in ctrl_den_input.split(",") if x.strip()]
+            except ValueError:
+                st.error("Invalid controller coefficient format")
+                st.stop()
+        else:
+            st.caption("Check to add C(s) in series with G(s).")
+
+    calculate_button = st.button("🔍 Calculate", type="primary", use_container_width=True)
 
     if not calculate_button:
         st.stop()
@@ -198,11 +251,11 @@ try:
     st.header("Stability Analysis")
 
     # Classify each component
-    g_stab,  _, g_det  = classify_stability(ctrl.pole(G))
-    gc_stab, _, gc_det = classify_stability(ctrl.pole(GC))
-    cl_stab, _, cl_det = classify_stability(ctrl.pole(T))
+    g_stab,  _, g_det  = classify_stability(ctrl.poles(G))
+    gc_stab, _, gc_det = classify_stability(ctrl.poles(GC))
+    cl_stab, _, cl_det = classify_stability(ctrl.poles(T))
     if use_controller:
-        c_stab, _, c_det = classify_stability(ctrl.pole(C))
+        c_stab, _, c_det = classify_stability(ctrl.poles(C))
 
     def _stab_card(label, stab_class, details):
         icons = {
@@ -225,11 +278,13 @@ try:
             )
 
     if use_controller:
-        ca, cb, cc, cd = st.columns(4)
-        with ca: _stab_card("Plant G(s)",       g_stab,  g_det)
-        with cb: _stab_card("Controller C(s)",  c_stab,  c_det)
+        # 2 per row → wraps to 2×2 on mobile via CSS
+        ca, cb = st.columns(2)
+        with ca: _stab_card("Plant G(s)",         g_stab,  g_det)
+        with cb: _stab_card("Controller C(s)",    c_stab,  c_det)
+        cc, cd = st.columns(2)
         with cc: _stab_card("Open-Loop G(s)C(s)", gc_stab, gc_det)
-        with cd: _stab_card("Closed-Loop T(s)", cl_stab, cl_det)
+        with cd: _stab_card("Closed-Loop T(s)",   cl_stab, cl_det)
     else:
         ca, cb, cc = st.columns(3)
         with ca: _stab_card("Plant G(s)",       g_stab,  g_det)
@@ -300,13 +355,12 @@ try:
             )
 
     def _pz_tab(label, sys_obj, pole_color="red", zero_color="blue"):
-        p, z = ctrl.pole(sys_obj), ctrl.zero(sys_obj)
+        p, z = ctrl.poles(sys_obj), ctrl.zeros(sys_obj)
         chart_col, info_col = st.columns([3, 1])
         with chart_col:
-            st.plotly_chart(
-                _make_pz_figure(p, z, label, pole_color, zero_color),
-                use_container_width=True,
-            )
+            fig = _make_pz_figure(p, z, label, pole_color, zero_color)
+            fig.update_layout(height=380)
+            st.plotly_chart(fig, use_container_width=True)
         with info_col:
             with st.container(border=True):
                 st.markdown("**Poles**")
@@ -389,10 +443,13 @@ try:
 
         valid = [(lbl, val) for lbl, val in raw if "N/A" not in val]
         if valid:
-            cols = st.columns(len(valid))
-            for col, (lbl, val) in zip(cols, valid):
-                with col:
-                    _metric_card(lbl, val)
+            # Max 3 per row so cards stay readable on mobile
+            for row_start in range(0, len(valid), 3):
+                row = valid[row_start:row_start + 3]
+                cols = st.columns(len(row))
+                for col, (lbl, val) in zip(cols, row):
+                    with col:
+                        _metric_card(lbl, val)
 
     # ---------------------------------------------------------------------------
     # Frequency Domain Analysis

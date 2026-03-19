@@ -259,12 +259,14 @@ try:
         with ca: _stab_card("Plant G(s)",         g_stab,  g_det)
         with cb: _stab_card("Controller C(s)",    c_stab,  c_det)
         cc, cd = st.columns(2)
-        with cc: _stab_card("Open-Loop G(s)C(s)", gc_stab, gc_det)
+        ol_blue = gc_stab == "Unstable" and cl_stab == "Asymptotically Stable"
+        with cc: _stab_card("Open-Loop G(s)C(s)", gc_stab, gc_det, highlight_blue=ol_blue)
         with cd: _stab_card("Closed-Loop T(s)",   cl_stab, cl_det)
     else:
         ca, cb, cc = st.columns(3)
+        ol_blue = gc_stab == "Unstable" and cl_stab == "Asymptotically Stable"
         with ca: _stab_card("Plant G(s)",       g_stab,  g_det)
-        with cb: _stab_card("Open-Loop G(s)",   gc_stab, gc_det)
+        with cb: _stab_card("Open-Loop G(s)",   gc_stab, gc_det, highlight_blue=ol_blue)
         with cc: _stab_card("Closed-Loop T(s)", cl_stab, cl_det)
 
     # Contextual diagnostic messages

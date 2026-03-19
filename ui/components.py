@@ -15,14 +15,16 @@ def _tf_card(title, latex_str):
         st.latex(latex_str)
 
 
-def _stab_card(label, stab_class, details):
+def _stab_card(label, stab_class, details, highlight_blue=False):
     """Render a bordered stability-status card with icon and colour coding."""
     icons = {
         "Asymptotically Stable": ("✅", "green"),
-        "Marginally Stable":     ("ℹ️", "#4a9eff"),
+        "Marginally Stable":     ("✅", "green"),
         "Unstable":              ("❌", "red"),
     }
     icon, color = icons.get(stab_class, ("ℹ️", "gray"))
+    if highlight_blue:
+        icon, color = "ℹ️", "#4a9eff"
     with st.container(border=True):
         st.markdown(
             "<div style='display:flex; flex-direction:column; align-items:center; "

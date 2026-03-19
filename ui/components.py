@@ -19,7 +19,7 @@ def _stab_card(label, stab_class, details):
     """Render a bordered stability-status card with icon and colour coding."""
     icons = {
         "Asymptotically Stable": ("✅", "green"),
-        "Marginally Stable":     ("⚠️", "orange"),
+        "Marginally Stable":     ("ℹ️", "#4a9eff"),
         "Unstable":              ("❌", "red"),
     }
     icon, color = icons.get(stab_class, ("ℹ️", "gray"))

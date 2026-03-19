@@ -122,7 +122,7 @@ with st.sidebar:
                 help="Comma-separated coefficients", key="ctrl_num",
             )
             ctrl_den_input = st.text_input(
-                "Denominator", "1",
+                "Denominator", "1,0",
                 help="Comma-separated coefficients", key="ctrl_den",
             )
 

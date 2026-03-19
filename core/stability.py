@@ -9,7 +9,7 @@ def classify_stability(poles):
         tuple: (stability_class, short_description, detailed_description)
     """
     if poles.size == 0:
-        return "Undefined", "No poles found", "System has no poles to analyze"
+        return "Static Gain", "No poles — pure gain", "System is a static gain (no dynamics)"
 
     left_poles = poles[poles.real < 0]
     right_poles = poles[poles.real > 0]

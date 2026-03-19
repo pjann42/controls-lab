@@ -60,7 +60,7 @@ def classify_stability(poles):
             "Marginally Stable",
             "Single pole at origin",
             f"Single integrator (s=0) + {len(left_poles)} stable poles. "
-            "Note: Step input causes unbounded output",
+            "Open-loop response to step is unbounded (ramp) — expected for integrating components.",
         )
 
     if len(imag_poles) > 0 and not repeated_imag_poles:

@@ -2,6 +2,8 @@
 
 An interactive web tool for analyzing linear time-invariant (LTI) control systems under unity feedback. Built with Python and Streamlit.
 
+**[Launch the app](https://controls-lab-n3q4fdygrll6th7wuve5xh.streamlit.app/)**
+
 > **Note:** This project is under active development. Some features may be incomplete, and the tool has not yet undergone full validation testing.
 
 ---

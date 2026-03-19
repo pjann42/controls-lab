@@ -280,7 +280,7 @@ try:
     if gc_stab == "Unstable" and cl_stab == "Asymptotically Stable":
         st.info("ℹ️ The open loop is unstable. Gain/Phase margins from Bode require Nyquist analysis for correct interpretation.")
     if cl_stab == "Marginally Stable":
-        st.warning("⚠️ The closed loop is marginally stable — sustained oscillations may occur for certain inputs.")
+        st.info("Marginally stable — sustained oscillations may occur for certain inputs.")
 
     # ---------------------------------------------------------------------------
     # Pole-Zero Maps
@@ -311,10 +311,7 @@ try:
         st.subheader("Step Response Metrics")
 
         if stability_class == "Marginally Stable":
-            st.info(
-                "ℹ️ Only Peak metrics are shown — Rise Time, Settling Time, Overshoot and "
-                "Steady-State Value are not physically meaningful for marginally stable systems."
-            )
+            st.info("Only Peak metrics shown — other metrics are not meaningful for marginally stable systems.")
             raw = [
                 ("Peak",      format_metric(step_info.get("Peak"))),
                 ("Peak Time", f"{format_metric(step_info.get('PeakTime'))} s"),

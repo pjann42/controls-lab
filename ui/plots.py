@@ -65,13 +65,15 @@ def build_pz_figure(p, z, title, pole_color="red", zero_color="blue"):
     return fig
 
 
-def build_step_figure(t, y, stability_class):
+def build_step_figure(t, y, stability_class, steady_state=None):
     """Return a Plotly step-response figure.
 
     Args:
         t: time array
         y: response array
         stability_class: one of "Asymptotically Stable", "Marginally Stable", "Unstable"
+        steady_state: exact steady-state value for the annotation; falls back to
+            the last sample of ``y`` when not provided
 
     Returns:
         go.Figure
@@ -85,11 +87,12 @@ def build_step_figure(t, y, stability_class):
     ))
 
     if stability_class == "Asymptotically Stable":
+        ss = float(steady_state) if steady_state is not None else float(y[-1])
         fig.add_hline(
-            y=float(y[-1]),
+            y=ss,
             line_dash="dot",
             line_color="gray",
-            annotation_text=f"Steady state: {y[-1]:.3f}",
+            annotation_text=f"Steady state: {ss:.3f}",
         )
 
     fig.update_layout(

@@ -304,11 +304,15 @@ try:
     if stability_class == "Unstable":
         st.error("⚠️ Skipped — step response diverges for unstable closed-loop systems")
     else:
-        time = np.linspace(0, 10, 1000)
-        t, y = ctrl.step_response(T, time)
+        # Let python-control pick a horizon matched to the system dynamics,
+        # so slow systems are not truncated at a fixed 10 s window.
+        t, y = ctrl.step_response(T)
         step_info = ctrl.step_info(T)
+        # Exact steady-state from the final value theorem, independent of the
+        # simulation horizon (avoids reading a not-yet-settled last sample).
+        steady_state = float(ctrl.dcgain(T))
 
-        st.plotly_chart(build_step_figure(t, y, stability_class), use_container_width=True)
+        st.plotly_chart(build_step_figure(t, y, stability_class, steady_state), use_container_width=True)
 
         st.subheader("Step Response Metrics")
 
@@ -325,7 +329,7 @@ try:
                 ("Overshoot",     f"{format_metric(step_info.get('Overshoot', 0))}%"),
                 ("Peak",          format_metric(step_info.get("Peak"))),
                 ("Peak Time",     f"{format_metric(step_info.get('PeakTime'))} s"),
-                ("Steady State",  format_metric(y[-1])),
+                ("Steady State",  format_metric(steady_state)),
             ]
 
         valid = [(lbl, val) for lbl, val in raw if "N/A" not in val]

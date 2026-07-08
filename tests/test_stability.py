@@ -3,9 +3,9 @@ import pytest
 from core.stability import classify_stability
 
 
-def test_empty_poles_returns_undefined():
+def test_empty_poles_returns_static_gain():
     stability, _, _ = classify_stability(np.array([]))
-    assert stability == "Undefined"
+    assert stability == "Static Gain"
 
 
 def test_all_left_poles_asymptotically_stable():

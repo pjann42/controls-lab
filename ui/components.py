@@ -20,6 +20,7 @@ def _stab_card(label, stab_class, details, highlight_blue=False):
     icons = {
         "Asymptotically Stable": ("✅", "green"),
         "Marginally Stable":     ("✅", "green"),
+        "Static Gain":           ("✅", "green"),
         "Unstable":              ("❌", "red"),
     }
     icon, color = icons.get(stab_class, ("ℹ️", "gray"))

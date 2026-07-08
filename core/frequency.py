@@ -104,7 +104,13 @@ def smart_autoscale(y_data, padding_factor=0.1, steady_state_threshold=0.01):
     Returns:
         tuple: (y_min, y_max)
     """
-    y_min, y_max = float(np.min(y_data)), float(np.max(y_data))
+    y_data = np.asarray(y_data, dtype=float)
+    finite = y_data[np.isfinite(y_data)]
+    if finite.size == 0:
+        # No finite data to scale (e.g. magnitude -inf at a jω-axis zero)
+        return -1.0, 1.0
+
+    y_min, y_max = float(np.min(finite)), float(np.max(finite))
     data_range = y_max - y_min
 
     # Very small range — add fixed padding for visual clarity

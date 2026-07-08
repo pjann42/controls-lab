@@ -75,6 +75,21 @@ def test_steady_state_uses_symmetric_range():
     assert abs(center - 5.0) < 3.0  # roughly centered
 
 
+def test_non_finite_values_ignored():
+    # -inf (magnitude at a jω-axis zero) must not break the scaling
+    y = np.array([0.0, -np.inf, 5.0, 10.0, np.nan])
+    y_min, y_max = smart_autoscale(y)
+    assert np.isfinite(y_min) and np.isfinite(y_max)
+    assert y_min < 0 and y_max > 10
+
+
+def test_all_non_finite_returns_finite_fallback():
+    y = np.array([np.inf, -np.inf, np.nan])
+    y_min, y_max = smart_autoscale(y)
+    assert np.isfinite(y_min) and np.isfinite(y_max)
+    assert y_min < y_max
+
+
 # --- align_phase_axis_45_deg ---
 
 def test_tick_values_are_multiples_of_45():
